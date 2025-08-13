@@ -237,4 +237,4 @@ Para contribuir al desarrollo:
 
 ---
 
-**Desarrollado para Atisa** 🏢 
+**Desarrollado para Atisa** 🏢
