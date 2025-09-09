@@ -1,6 +1,3 @@
-# gestor_front_facturas_pendientes-
-Proyecto que se encarga de gestionar las facturas impagadas y pendientes de los distintos clientes de ATISA. (FRONT
-
 # 🏢 Atisa - Sistema de Gestión de Facturas Frontend
 
 [![React](https://img.shields.io/badge/React-18.0.0-blue.svg)](https://reactjs.org/)
@@ -1026,3 +1023,63 @@ Ser referente en el desarrollo de soluciones tecnológicas para la gestión empr
 
 *Última actualización: Enero 2024*
 *Versión del documento: 1.0.0*
+## Cambios Recientes de UI
+
+- Facturas (vista empresa):
+  - Se muestra un chip de sociedad junto al título de cada factura con nombre y color según `CPY_0` (S005/S001/S010).
+  - Botón “Historial” reubicado junto al chip (más compacto y visible); elimina versiones duplicadas laterales.
+  - Nuevo selector de filtro por sociedad (Todas / S005 / S001 / S010) junto al buscador.
+  - Corrección del selector de fecha de aviso: evita desfases de un día (usa formato local `YYYY-MM-DD`).
+- Persistencia de acciones: al guardar acciones se registran vía `POST /api/facturas/acciones` y se recargan desde BD.
+- Se eliminaron los botones “Marcar pagada” y “Aplazar” y su modal asociado.
+- Se muestra el nombre de la factura (`nombre_factura`, desde `NUM_0`).
+  - En la vista de facturas por empresa, aparece debajo de “Factura #tipo-asiento”.
+- El historial de acciones lista ahora también el `nombre_factura` cuando está disponible.
+- El botón “Añadir Acción” usa estilo azul y pasa a verde en hover.
+ - Cada factura muestra ahora:
+   - Importe (AMTCUR_0)
+   - Pagado (PAYCUR_0)
+   - Pendiente (AMTCUR_0 - PAYCUR_0)
+
+### Notas de Integración
+- El frontend espera que el backend incluya `sociedad_nombre` en la respuesta de facturas y soporta el filtro `?sociedad=`.
+- Asegúrate de configurar `VITE_API_URL` o usar el proxy de Vite para que `/api/*` apunte al backend.
+## Filtros y comportamiento de datos (UI)
+
+Esta aplicación está alineada con la lógica del backend. Resumen de filtros y vistas:
+
+- Empresas (Listado)
+  - Muestra una tarjeta por empresa con deuda neta > 0.
+  - Filtros de la vista:
+    - Búsqueda por nombre o CIF (cliente).
+    - Filtro por consultor asignado (incluye opción “Sin asignar”).
+  - Sin datos mock: si la API falla, muestra un mensaje de error y lista vacía.
+
+- Facturas de Empresa (Detalle)
+  - Separa facturas y abonos en base a las banderas de la API.
+  - Resumen visible: Pendiente facturas, Abonos y Total neto (filtrado por sociedad/búsqueda si usas esos controles en la página).
+
+- Dashboard
+  - Llama a `/api/estadisticas` y refleja exactamente los mismos filtros del backend (ver README del backend).
+  - KPIs: Total empresas con deuda, Total facturas con saldo, Monto total neto adeudado.
+
+## Indicador global de conexión
+
+- En el header se muestra un badge:
+  - Conectando: mientras haya peticiones en curso.
+  - Sin conexion: si la última petición falló.
+  - Conectado: estado normal.
+- Este indicador reacciona a todas las llamadas (Dashboard, Empresas, detalle, etc.).
+
+## Errores y sin mocks
+
+- Cuando la API falla, no se cargan datos de ejemplo (para evitar confusiones):
+  - Empresas: se muestra banner de error y la lista se queda vacía.
+  - Dashboard: muestra error y botón de reintento.
+
+## Rutas de la API usadas por el frontend
+
+- `/api/clientes-con-resumen`: listado de empresas con deuda.
+- `/api/facturas-cliente/{id}`: facturas de un cliente.
+- `/api/estadisticas`: KPIs del dashboard.
+- `/api/facturas/acciones` y `/api/facturas/cambios`: registro operativo asociado a facturas.
