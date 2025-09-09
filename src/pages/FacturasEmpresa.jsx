@@ -1,19 +1,22 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Edit, Trash2, FileText, Bell, Mail, User, Calendar } from 'lucide-react'
+import { ArrowLeft, Plus, Edit, Trash2, FileText, Bell, Mail, User, Calendar, History } from 'lucide-react'
 import Card from '../components/Card'
 import SearchBar from '../components/SearchBar'
 
 import FacturaModal from '../components/FacturaModal'
 import AsignarConsultorModal from '../components/AsignarConsultorModal'
 import ConfirmModal from '../components/ConfirmModal'
+import HistorialList from '../components/HistorialList'
 import { useData } from '../context/DataContext'
 
 const FacturasEmpresa = () => {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { empresas, consultores, getFacturasEmpresa, error, recargarDatos } = useData()
+  const { empresas, consultores, getFacturasEmpresa, error, recargarDatos, getHistorialFactura, registrarEventoHistorial, asignarConsultorACliente, getAcciones, registrarAccion } = useData()
   const [searchTerm, setSearchTerm] = useState('')
+  const [sociedadFilter, setSociedadFilter] = useState('')
+  const [tipoFiltro, setTipoFiltro] = useState('ambos') // 'ambos' | 'facturas' | 'abonos'
   const [showFacturaModal, setShowFacturaModal] = useState(false)
   const [facturas, setFacturas] = useState([])
   const [loadingFacturas, setLoadingFacturas] = useState(true)
@@ -33,9 +36,15 @@ const FacturasEmpresa = () => {
   const [showConfirmModal, setShowConfirmModal] = useState(false)
   const [itemToDelete, setItemToDelete] = useState(null)
   const [deleteType, setDeleteType] = useState('') // 'factura' o 'accion'
+  // Historial de facturas
+  const [historialMap, setHistorialMap] = useState({}) // { [facturaId]: eventos[] }
+  const [openHistorial, setOpenHistorial] = useState({}) // { [facturaId]: bool }
+  const [showHistorialModal, setShowHistorialModal] = useState(false)
+  const [historialMode, setHistorialMode] = useState('pagada') // 'pagada' | 'aplazar'
+  const [selectedFactura, setSelectedFactura] = useState(null)
 
   const empresa = empresas.find(e => e.id === id)
-  const consultor = consultores.find(c => c.nombre === empresa?.consultorAsignado)
+  const consultor = consultores.find(c => c.nombre === (empresa?.consultorAsignado || '').trim())
 
   // Cargar facturas cuando se monta el componente
   useEffect(() => {
@@ -54,23 +63,70 @@ const FacturasEmpresa = () => {
       }
     }
     cargarFacturas()
-  }, [id, getFacturasEmpresa])
+  }, [id])
 
-  // Cargar acciones (mock data por ahora)
-  useEffect(() => {
-    // Mock acciones para demostración
-    setAcciones([
-      {
-        id: 1,
-        fecha: '2024-07-20',
-        autor: 'Allan Cantos Delgado',
-        tipo: 'Email',
-        descripcion: 'Se envió primer recordatorio por email.',
-        aviso: '2024-07-27',
-        facturaId: 'TS-2024-001'
+  const toggleHistorial = async (factura) => {
+    setOpenHistorial(prev => ({ ...prev, [factura.id]: !prev[factura.id] }))
+    if (!historialMap[factura.id]) {
+      const eventos = await getHistorialFactura({ tercero: factura.tercero, tipo: factura.tipo, asiento: factura.asiento })
+      setHistorialMap(prev => ({ ...prev, [factura.id]: eventos }))
+    }
+  }
+
+  const handleMarcarPagada = (factura) => {
+    setSelectedFactura(factura)
+    setHistorialMode('pagada')
+    setShowHistorialModal(true)
+  }
+
+  const handleAplazar = (factura) => {
+    setSelectedFactura(factura)
+    setHistorialMode('aplazar')
+    setShowHistorialModal(true)
+  }
+
+  const handleSaveHistorialEvento = async (payload) => {
+    try {
+      const saved = await registrarEventoHistorial(payload)
+      if (selectedFactura) {
+        setHistorialMap(prev => {
+          const current = prev[selectedFactura.id] || []
+          return { ...prev, [selectedFactura.id]: [saved, ...current] }
+        })
       }
-    ])
-  }, [])
+      setShowHistorialModal(false)
+      setSelectedFactura(null)
+    } catch (e) {
+      alert('No se pudo guardar el evento de historial')
+    }
+  }
+
+  // Cargar acciones desde la API (por empresa)
+  useEffect(() => {
+    const cargarAcciones = async () => {
+      if (!empresa) return
+      try {
+        const lista = await getAcciones({ idcliente: empresa.id || empresa.idcliente })
+        const mapeadas = lista.map(a => {
+          const fMatch = facturas.find(f => String(f.tipo) === String(a.tipo) && String(f.asiento) === String(a.asiento))
+          return {
+            id: a.id,
+            fecha: a.creado_en?.split('T')[0] || '',
+            autor: a.usuario || 'Usuario',
+            tipo: a.accion_tipo,
+            descripcion: a.descripcion || '',
+            aviso: a.aviso?.split('T')[0] || '',
+            facturaId: `${a.tipo}-${a.asiento}`,
+            nombre_factura: fMatch?.nombre_factura || null,
+          }
+        })
+        setAcciones(mapeadas)
+      } catch (e) {
+        console.error('Error cargando acciones:', e)
+      }
+    }
+    cargarAcciones()
+  }, [empresa, facturas])
 
   // Cerrar calendario al hacer clic fuera
   useEffect(() => {
@@ -135,15 +191,90 @@ const FacturasEmpresa = () => {
   }
 
   // Verificar si la empresa tiene consultor asignado
-  const hasConsultor = !!empresa.consultorAsignado
+  const hasConsultor = !!((empresa?.consultorAsignado || '').trim() && consultor)
 
   const facturasFiltradas = facturas.filter(factura => {
-    const searchLower = searchTerm.toLowerCase()
-    return (
-      factura.numero?.toLowerCase().includes(searchLower) ||
-      factura.monto?.toString().includes(searchLower)
+    const searchLower = String(searchTerm || '').toLowerCase().trim()
+
+    // Intenta interpretar el término de búsqueda como número en formato ES o EN
+    const parseSearchNumber = (s) => {
+      if (!s) return null
+      let t = String(s).trim().replace(/\s+/g, '')
+      // Si hay coma después del último punto, tratamos coma como decimal y punto como separador de miles
+      const lastComma = t.lastIndexOf(',')
+      const lastDot = t.lastIndexOf('.')
+      if (lastComma !== -1 && lastComma > lastDot) {
+        t = t.replace(/\./g, '').replace(',', '.')
+      } else {
+        // Estilo EN: quitar comas de miles
+        t = t.replace(/,/g, '')
+      }
+      const n = Number(t)
+      return Number.isFinite(n) ? n : null
+    }
+
+    const formatNumberEs = (n) => {
+      try {
+        return new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0)
+      } catch {
+        return String(n ?? '')
+      }
+    }
+
+    const searchNum = parseSearchNumber(searchTerm)
+
+    const numeroStr = String(factura.numero || '').toLowerCase()
+    const nombreFacturaStr = String(factura.nombre_factura || '').toLowerCase()
+    const sociedadStr = String(factura.sociedad || '').toLowerCase()
+
+    const montoNum = Number(factura.monto) || 0
+    const pagoNum = Number(factura.pago) || 0
+    const pendienteNum = typeof factura.pendiente === 'number' ? Number(factura.pendiente) : Math.max(0, montoNum - pagoNum)
+
+    const montoStr = String(montoNum)
+    const pendienteStr = String(pendienteNum)
+
+    const montoEs = formatNumberEs(montoNum) // ej: 33.209,66
+    const pendienteEs = formatNumberEs(pendienteNum)
+
+    const epsilon = 0.005 // tolerancia para comparación a 2 decimales
+
+    const matchSearch = (
+      // Coincidencias por texto
+      (searchLower.length === 0) ||
+      numeroStr.includes(searchLower) ||
+      nombreFacturaStr.includes(searchLower) ||
+      sociedadStr.includes(searchLower) ||
+      montoStr.includes(searchLower) ||
+      pendienteStr.includes(searchLower) ||
+      montoEs.includes(searchTerm) ||
+      pendienteEs.includes(searchTerm) ||
+      // Coincidencias numéricas exactas (a 2 decimales)
+      (searchNum !== null && (
+        Math.abs(montoNum - searchNum) < epsilon ||
+        Math.abs(pendienteNum - searchNum) < epsilon ||
+        Math.abs(pagoNum - searchNum) < epsilon
+      ))
     )
+
+    const matchSociedad = !sociedadFilter || factura.sociedad === sociedadFilter
+    return matchSearch && matchSociedad
   })
+
+  // Separar abonos: FLGCLE_0 = -1 (check_pago) o SNS_0 = -1, o importe negativo
+  const esAbono = (f) => Number(f.check_pago) === -1 || Number(f.sentido) === -1 || Number(f.monto) < 0
+  const abonos = facturasFiltradas.filter(esAbono)
+  const facturasPend = facturasFiltradas.filter(f => !esAbono(f))
+
+  // Totales: suma de pendiente de facturas menos abonos
+  const totalPendienteFacturas = facturasPend.reduce((sum, f) => {
+    const importe = Number(f.monto) || 0
+    const pago = Number(f.pago) || 0
+    const pendiente = typeof f.pendiente === 'number' ? Number(f.pendiente) : (importe - pago)
+    return sum + Math.max(0, pendiente)
+  }, 0)
+  const totalAbonos = abonos.reduce((sum, a) => sum + Math.abs(Number(a.monto) || 0), 0)
+  const totalPendienteReal = totalPendienteFacturas - totalAbonos
 
   const handleAddFactura = () => {
     if (!hasConsultor) {
@@ -280,13 +411,33 @@ const FacturasEmpresa = () => {
     e.preventDefault()
     if (!accionFormData.descripcion.trim()) return
 
-    const accionData = {
-      ...accionFormData,
-      fecha: new Date().toISOString().split('T')[0],
-      autor: consultor?.nombre || 'Usuario'
+    const [tipoFactura, asientoFactura] = String(facturaId).split('-')
+    const payload = {
+      idcliente: parseInt(empresa?.id || empresa?.idcliente || '0', 10) || undefined,
+      tercero: empresa?.idcliente || empresa?.id || '',
+      tipo: tipoFactura || '',
+      asiento: asientoFactura || '',
+      accion_tipo: accionFormData.tipo || 'Otro',
+      descripcion: accionFormData.descripcion,
+      aviso: accionFormData.aviso || undefined,
+      usuario: consultor?.nombre || 'Usuario',
     }
-
-    handleSaveAccion(accionData, facturaId)
+    registrarAccion(payload)
+      .then(() => getAcciones({ idcliente: payload.idcliente }))
+      .then((lista) => {
+        const mapeadas = lista.map(a => ({
+          id: a.id,
+          fecha: a.creado_en?.split('T')[0] || '',
+          autor: a.usuario || 'Usuario',
+          tipo: a.accion_tipo,
+          descripcion: a.descripcion || '',
+          aviso: a.aviso?.split('T')[0] || '',
+          facturaId: `${a.tipo}-${a.asiento}`,
+        }))
+        setAcciones(mapeadas)
+        handleCancelAccion(facturaId)
+      })
+      .catch(() => alert('No se pudo registrar la acción'))
   }
 
   const formatDate = (date) => {
@@ -307,7 +458,11 @@ const FacturasEmpresa = () => {
 
   const handleDateSelect = (day) => {
     const selectedDate = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day)
-    const formattedDate = selectedDate.toISOString().split('T')[0]
+    // Formatear a YYYY-MM-DD en horario local para evitar desfases por zona horaria
+    const y = selectedDate.getFullYear()
+    const m = String(selectedDate.getMonth() + 1).padStart(2, '0')
+    const d = String(selectedDate.getDate()).padStart(2, '0')
+    const formattedDate = `${y}-${m}-${d}`
     setAccionFormData(prev => ({ ...prev, aviso: formattedDate }))
     setShowDatePicker(false)
   }
@@ -324,15 +479,12 @@ const FacturasEmpresa = () => {
     setCurrentMonth(new Date())
   }
 
-  const handleAsignarConsultor = (consultorId) => {
-    // Aquí deberías actualizar la empresa con el consultor asignado
-    // Por ahora, simularemos la actualización
-    const consultorSeleccionado = consultores.find(c => c.id === consultorId)
-    if (consultorSeleccionado) {
-      // En una aplicación real, aquí harías una llamada a la API
-      // Por ahora, solo cerramos el modal y recargamos la página
+  const handleAsignarConsultor = async (consultorId) => {
+    try {
+      const idcliente = empresa?.id || empresa?.idcliente || id
+      await asignarConsultorACliente(idcliente, consultorId)
+    } finally {
       setShowAsignarConsultorModal(false)
-      window.location.reload() // Recargar para ver los cambios
     }
   }
 
@@ -423,14 +575,80 @@ const FacturasEmpresa = () => {
           {/* Search Bar */}
           <div className="mb-6">
             <SearchBar
-              placeholder="Buscar por nº de factura o importe..."
+              placeholder="Buscar por numero de factura o importe..."
               value={searchTerm}
               onChange={setSearchTerm}
             />
+            {/* Selector de sociedades (select) */}
+            <div className="mt-3">
+              <select
+                className="input-field w-64 border-gray-300 dark:border-gray-700 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                value={sociedadFilter}
+                onChange={(e) => setSociedadFilter(e.target.value)}
+                title="Filtrar por sociedad"
+              >
+                <option value="">Todas las sociedades</option>
+                <option value="S005">Grupo Atisa BPO (S005)</option>
+                <option value="S001">Asesores Titulados (S001)</option>
+                <option value="S010">Selier by Atisa (S010)</option>
+              </select>
+            </div>
+            {/* Toggle tipo: Facturas / Abonos / Ambos */}
+            <div className="mt-4 inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden">
+              <button
+                type="button"
+                className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+                  tipoFiltro === 'ambos'
+                    ? 'bg-[#0A5C63] text-white'
+                    : 'bg-gray-100 text-gray-800 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
+                }`}
+                onClick={() => setTipoFiltro('ambos')}
+              >
+                Ambos
+              </button>
+              <button
+                type="button"
+                className={`px-4 py-1.5 text-sm font-medium border-l border-gray-300 dark:border-gray-700 transition-colors ${
+                  tipoFiltro === 'facturas'
+                    ? 'bg-[#0A5C63] text-white'
+                    : 'bg-gray-100 text-gray-800 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
+                }`}
+                onClick={() => setTipoFiltro('facturas')}
+              >
+                Solo facturas
+              </button>
+              <button
+                type="button"
+                className={`px-4 py-1.5 text-sm font-medium border-l border-gray-300 dark:border-gray-700 transition-colors ${
+                  tipoFiltro === 'abonos'
+                    ? 'bg-[#0A5C63] text-white'
+                    : 'bg-gray-100 text-gray-800 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
+                }`}
+                onClick={() => setTipoFiltro('abonos')}
+              >
+                Solo abonos
+              </button>
+            </div>
+          </div>
+          {/* Resumen de totales */}
+          <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-lg p-4 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+              <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Pendiente facturas</div>
+              <div className="text-xl font-semibold text-gray-900 dark:text-white">{formatearMoneda(totalPendienteFacturas)}</div>
+            </div>
+            <div className="rounded-lg p-4 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+              <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Abonos</div>
+              <div className="text-xl font-semibold text-amber-600">{formatearMoneda(totalAbonos)}</div>
+            </div>
+            <div className="rounded-lg p-4 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+              <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total neto</div>
+              <div className={`text-xl font-bold ${totalPendienteReal >= 0 ? 'text-gray-900 dark:text-white' : 'text-red-500'}`}>{formatearMoneda(totalPendienteReal)}</div>
+            </div>
           </div>
         </div>
 
         {/* Facturas List */}
+        {tipoFiltro !== 'abonos' && (
         <div className="space-y-6">
           {loadingFacturas ? (
             <Card>
@@ -439,17 +657,55 @@ const FacturasEmpresa = () => {
                 <p className="text-gray-600 dark:text-gray-400">Cargando facturas...</p>
               </div>
             </Card>
-          ) : facturasFiltradas.length > 0 ? (
-            facturasFiltradas.map(factura => (
+          ) : facturasPend.length > 0 ? (
+            facturasPend.map(factura => (
               <Card key={factura.id} className="p-6">
                 <div className="flex justify-between items-start">
                   {/* Left side - Invoice details */}
                   <div className="flex-1">
                     <div className="mb-4">
-                      <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
-                        Factura #{factura.numero}
-                      </h3>
-                      <p className="text-gray-600 dark:text-gray-400">
+                      <h3 className="text-xl font-bold text-gray-900 dark:text-white">Factura #{factura.numero}</h3>
+                      {factura.nombre_factura && (
+                        <p className="mt-1 text-sm text-gray-700 dark:text-gray-300">{factura.nombre_factura}</p>
+                      )}
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                          factura.sociedad === 'S005' ? 'bg-teal-100 text-teal-700 dark:bg-teal-900 dark:text-teal-100' :
+                          factura.sociedad === 'S001' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-100' :
+                          factura.sociedad === 'S010' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-100' :
+                          'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200'
+                        }`}>
+                          {factura.sociedad_nombre || factura.sociedad || 'Sociedad'}
+                        </span>
+                        <button
+                          className="inline-flex items-center space-x-2 px-3 py-1.5 rounded-md bg-[#0A5C63] hover:bg-[#A4C63B] text-white transition-colors text-xs"
+                          onClick={() => toggleHistorial(factura)}
+                          title="Ver historial de cambios"
+                        >
+                          <History className="w-3.5 h-3.5" />
+                          <span>Historial</span>
+                        </button>
+                      </div>
+                      {/* Montos compactos debajo del encabezado */}
+                      <div className="mt-2 flex items-center gap-4 text-sm">
+                        <div className="text-gray-600 dark:text-gray-300">
+                          <span className="text-xs uppercase tracking-wide">Importe</span>{' '}
+                          <span className="font-semibold text-gray-900 dark:text-white">{formatearMoneda(factura.monto)}</span>
+                        </div>
+                        {Number(factura.pago) > 0 && (
+                          <>
+                            <div className="text-gray-600 dark:text-gray-300">
+                              <span className="text-xs uppercase tracking-wide">Pagado</span>{' '}
+                              <span className="font-semibold text-emerald-600">{formatearMoneda(factura.pago)}</span>
+                            </div>
+                            <div className="text-gray-600 dark:text-gray-300">
+                              <span className="text-xs uppercase tracking-wide">Pendiente</span>{' '}
+                              <span className="font-bold text-red-500">{formatearMoneda(factura.pendiente)}</span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      <p className="text-gray-600 dark:text-gray-400 mt-2">
                         Vencimiento: {formatearFecha(factura.vencimiento)}
                       </p>
                     </div>
@@ -469,7 +725,7 @@ const FacturasEmpresa = () => {
                                 <div className="flex items-center space-x-3">
                                   <Mail className="w-4 h-4 text-teal-600 dark:text-teal-400" />
                                   <span className="text-gray-900 dark:text-white text-sm">
-                                    {formatearFecha(accion.fecha)} - {accion.autor} ({accion.tipo})
+                                    {formatearFecha(accion.fecha)} — {accion.autor} ({accion.tipo}){accion.nombre_factura ? ` — ${accion.nombre_factura}` : ''}
                                   </span>
                                 </div>
                                 <div className="flex items-center space-x-2">
@@ -695,7 +951,7 @@ const FacturasEmpresa = () => {
                       ) : (
                         <button
                           onClick={() => handleAddAccion(factura.numero)}
-                          className="btn-secondary text-sm"
+                          className="text-sm inline-flex items-center justify-center px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-green-600 transition-colors"
                         >
                           Añadir Acción
                         </button>
@@ -703,13 +959,8 @@ const FacturasEmpresa = () => {
                     </div>
                   </div>
 
-                  {/* Right side - Amount and actions */}
+                  {/* Right side - Actions */}
                   <div className="flex items-center space-x-4 ml-6">
-                    <div className="text-right">
-                      <p className="text-2xl font-bold text-red-400">
-                        {formatearMoneda(factura.monto)}
-                      </p>
-                    </div>
                     <div className="flex items-center space-x-2">
                       <button
                         onClick={() => handleEditFactura(factura)}
@@ -724,21 +975,63 @@ const FacturasEmpresa = () => {
                         <Trash2 className="w-4 h-4 text-gray-600 dark:text-white" />
                       </button>
                     </div>
+                    <div />
                   </div>
                 </div>
+                {openHistorial[factura.id] && (
+                  <div className="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
+                    <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">Historial de la factura</h4>
+                    <HistorialList eventos={historialMap[factura.id]} />
+                  </div>
+                )}
               </Card>
             ))
           ) : (
             <Card>
-              <div className="text-center py-12">
-                <FileText className="w-12 h-12 text-gray-500 mx-auto mb-4" />
-                <p className="text-gray-600 dark:text-gray-400">
-                  {searchTerm ? 'No se encontraron facturas con el filtro aplicado.' : 'No hay facturas registradas.'}
-                </p>
+              <div className="text-center py-8">
+                <FileText className="w-8 h-8 text-gray-500 mx-auto mb-2" />
+                <p className="text-gray-600 dark:text-gray-400">No hay facturas que coincidan con el filtro.</p>
               </div>
             </Card>
           )}
         </div>
+        )}
+
+          {/* Sección de abonos */}
+          {tipoFiltro !== 'facturas' && ( abonos.length > 0 ? (
+            <div className="mt-10">
+              <h3 className="text-lg font-semibold text-amber-700 dark:text-amber-400 mb-4">Abonos (facturas de abono)</h3>
+              <div className="space-y-6">
+                {abonos.map(factura => (
+                  <Card key={`abono-${factura.id}`} className="p-6 border border-amber-300 dark:border-amber-700">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="mb-2">
+                          <h4 className="text-lg font-semibold text-gray-900 dark:text-white">Factura #{factura.numero}</h4>
+                          {factura.nombre_factura && (
+                            <p className="text-sm text-gray-700 dark:text-gray-300">{factura.nombre_factura}</p>
+                          )}
+                          <span className="mt-1 inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">Abono</span>
+                        </div>
+                        <p className="text-gray-600 dark:text-gray-400">Vencimiento: {formatearFecha(factura.vencimiento)}</p>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs text-gray-500 dark:text-gray-400">Importe (abono)</div>
+                        <div className="text-base font-bold text-amber-600">{formatearMoneda(factura.monto)}</div>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <Card>
+              <div className="text-center py-12">
+                <FileText className="w-12 h-12 text-gray-500 mx-auto mb-4" />
+                <p className="text-gray-600 dark:text-gray-400">No hay abonos que coincidan con el filtro.</p>
+              </div>
+            </Card>
+          ))}
 
         {/* Modals */}
         {showFacturaModal && (
@@ -790,6 +1083,7 @@ const FacturasEmpresa = () => {
         />
 
       </div>
+      {/* Historial modal eliminado: funcionalidad de pagada/aplazar desactivada */}
     </div>
   )
 }

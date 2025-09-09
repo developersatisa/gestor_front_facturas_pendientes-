@@ -7,11 +7,7 @@ const EmpresaCard = ({ empresa, onAsignarConsultor, onGestionarFacturas, formate
     <Card className="hover:shadow-lg transition-shadow duration-200">
       {/* Header */}
                        <div className="flex items-center space-x-4 mb-6">
-                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                     empresa.estado === 'verde' ? 'bg-green-600' :
-                     empresa.estado === 'amarillo' ? 'bg-yellow-600' :
-                     empresa.estado === 'rojo' ? 'bg-red-600' : 'bg-blue-600'
-                   }`}>
+                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center bg-blue-600`}>
                      <Building2 className="w-5 h-5 text-white" />
                    </div>
                    <div>
@@ -23,15 +19,7 @@ const EmpresaCard = ({ empresa, onAsignarConsultor, onGestionarFacturas, formate
                      {empresa.idcliente && (
                        <p className="text-xs text-gray-500">ID Cliente: {empresa.idcliente}</p>
                      )}
-                     <div className="flex items-center space-x-2 mt-1">
-                       <span className={`text-xs px-2 py-1 rounded-full ${
-                         empresa.estado === 'verde' ? 'bg-green-900/30 text-green-400' :
-                         empresa.estado === 'amarillo' ? 'bg-yellow-900/30 text-yellow-400' :
-                         empresa.estado === 'rojo' ? 'bg-red-900/30 text-red-400' : 'bg-blue-900/30 text-blue-400'
-                       }`}>
-                         {empresa.estado?.toUpperCase()}
-                       </span>
-                     </div>
+                     {/* Estado visual eliminado */}
                    </div>
                  </div>
 
@@ -47,8 +35,8 @@ const EmpresaCard = ({ empresa, onAsignarConsultor, onGestionarFacturas, formate
         <div className="flex items-center space-x-2">
           <Euro className="w-4 h-4 text-red-500" />
           <div>
-            <p className="text-sm text-gray-600 dark:text-gray-400">Total</p>
-            <p className="font-semibold text-red-400">{formatearMoneda(empresa.montoTotal)}</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400" title="Suma de pendientes de facturas menos abonos">Total neto</p>
+            <p className={`font-semibold ${empresa.montoTotal > 0 ? 'text-red-400' : 'text-gray-400'}`}>{formatearMoneda(empresa.montoTotal)}</p>
           </div>
         </div>
       </div>

@@ -1,12 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { X, User, Mail, Phone, Briefcase } from 'lucide-react'
+import { X, User } from 'lucide-react'
 
 const ConsultorFormModal = ({ consultor, onSave, onClose }) => {
   const [formData, setFormData] = useState({
     nombre: '',
-    email: '',
-    telefono: '',
-    especialidad: '',
     estado: 'activo'
   })
 
@@ -15,9 +12,6 @@ const ConsultorFormModal = ({ consultor, onSave, onClose }) => {
     if (consultor) {
       setFormData({
         nombre: consultor.nombre || '',
-        email: consultor.email || '',
-        telefono: consultor.telefono || '',
-        especialidad: consultor.especialidad || '',
         estado: consultor.estado || 'activo'
       })
     }
@@ -76,59 +70,7 @@ const ConsultorFormModal = ({ consultor, onSave, onClose }) => {
             </div>
           </div>
 
-          {/* Email */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Email
-            </label>
-            <div className="relative">
-              <Mail className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
-              <input
-                type="email"
-                name="email"
-                value={formData.email}
-                onChange={handleChange}
-                className="w-full pl-10 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-white rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                placeholder="email@ejemplo.com"
-              />
-            </div>
-          </div>
-
-          {/* Teléfono */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Teléfono
-            </label>
-            <div className="relative">
-              <Phone className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
-              <input
-                type="tel"
-                name="telefono"
-                value={formData.telefono}
-                onChange={handleChange}
-                className="w-full pl-10 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-white rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                placeholder="+34 600 000 000"
-              />
-            </div>
-          </div>
-
-          {/* Especialidad */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Especialidad
-            </label>
-            <div className="relative">
-              <Briefcase className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
-              <input
-                type="text"
-                name="especialidad"
-                value={formData.especialidad}
-                onChange={handleChange}
-                className="w-full pl-10 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-white rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                placeholder="Gestión de Cobros, Relaciones Clientes..."
-              />
-            </div>
-          </div>
+          {/* Solo estado */}
 
           {/* Estado */}
           <div>

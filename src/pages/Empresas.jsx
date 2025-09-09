@@ -9,7 +9,7 @@ import { useData } from '../context/DataContext'
 
 const Empresas = () => {
   const navigate = useNavigate()
-  const { empresas, consultores, loading, error, dataLoaded, recargarDatos } = useData()
+  const { empresas, consultores, loading, error, dataLoaded, recargarDatos, asignarConsultorACliente } = useData()
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedConsultor, setSelectedConsultor] = useState('')
   const [showAsignarModal, setShowAsignarModal] = useState(false)
@@ -22,7 +22,11 @@ const Empresas = () => {
     const matchesSearch = empresa.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          empresa.cif.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          empresa.cif_empresa.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesConsultor = !selectedConsultor || empresa.consultorAsignado === selectedConsultor
+    const matchesConsultor = !selectedConsultor
+      ? true
+      : (selectedConsultor === '__SIN__'
+          ? !empresa.consultorAsignado
+          : empresa.consultorAsignado === selectedConsultor)
     return matchesSearch && matchesConsultor
   })
 
@@ -134,7 +138,7 @@ const Empresas = () => {
           </div>
         )}
 
-        {/* Filtros */}
+        {/* Búsqueda */}
         <Card className="mb-8">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <SearchBar
@@ -146,8 +150,10 @@ const Empresas = () => {
               className="input-field"
               value={selectedConsultor}
               onChange={(e) => setSelectedConsultor(e.target.value)}
+              title="Filtrar por consultor asignado"
             >
               <option value="">Todos los consultores</option>
+              <option value="__SIN__">Sin asignar</option>
               {consultores.map(consultor => (
                 <option key={consultor.id} value={consultor.nombre}>
                   {consultor.nombre}
@@ -250,10 +256,13 @@ const Empresas = () => {
             empresa={selectedEmpresa}
             consultores={consultores}
             onClose={() => setShowAsignarModal(false)}
-            onSave={(consultorId) => {
-              // Aquí se actualizaría la empresa con el consultor asignado
-              console.log('Consultor asignado:', consultantId)
-              setShowAsignarModal(false)
+            onSave={async (consultorId) => {
+              try {
+                const idcliente = selectedEmpresa?.id || selectedEmpresa?.idcliente
+                await asignarConsultorACliente(idcliente, consultorId)
+              } finally {
+                setShowAsignarModal(false)
+              }
             }}
           />
         )}

@@ -1,39 +1,32 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react'
-import { facturasAPI } from '../services/api'
-import { mockConsultores } from '../data/mockData'
+﻿import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import api, { facturasAPI, historialAPI, consultoresAPI, registroAPI } from '../services/api';
 
-const DataContext = createContext()
+const DataContext = createContext();
 
 export const useData = () => {
-  const context = useContext(DataContext)
+  const context = useContext(DataContext);
   if (!context) {
-    throw new Error('useData debe ser usado dentro de un DataProvider')
+    throw new Error('useData debe ser usado dentro de un DataProvider');
   }
-  return context
-}
+  return context;
+};
 
 export const DataProvider = ({ children }) => {
-  const [empresas, setEmpresas] = useState([])
-  
-  // Cargar consultores desde localStorage o usar mockConsultores como fallback
-  const [consultores, setConsultores] = useState(() => {
-    try {
-      const savedConsultores = localStorage.getItem('atisa_consultores')
-      return savedConsultores ? JSON.parse(savedConsultores) : mockConsultores
-    } catch (error) {
-      console.error('Error cargando consultores desde localStorage:', error)
-      return mockConsultores
-    }
-  })
-  
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [dataLoaded, setDataLoaded] = useState(false)
-  const hasLoaded = useRef(false)
+  const [empresas, setEmpresas] = useState([]);
+  const [consultores, setConsultores] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [dataLoaded, setDataLoaded] = useState(false);
+  const hasLoaded = useRef(false);
 
-  // FunciÃ³n para procesar los datos de clientes con resumen
+  // Estado global de red (badge Header)
+  const [apiBusy, setApiBusy] = useState(0);
+  const [apiError, setApiError] = useState(null);
+  const [apiLastOk, setApiLastOk] = useState(null);
+
+  // Adaptar datos de la API a la UI
   const procesarDatosClientes = (clientesData) => {
-    return clientesData.map(cliente => ({
+    return clientesData.map((cliente) => ({
       id: cliente.idcliente,
       nombre: cliente.nombre_cliente?.trim() || 'Sin nombre',
       cif: cliente.cif_cliente?.trim() || 'Sin CIF',
@@ -41,167 +34,229 @@ export const DataProvider = ({ children }) => {
       idcliente: cliente.idcliente?.trim() || '',
       facturasPendientes: cliente.numero_facturas || 0,
       montoTotal: parseFloat(cliente.monto_debe) || 0,
-      estado: cliente.estado || 'verde',
-      consultorAsignado: null
-    }))
-  }
+      consultorAsignado: null,
+    }));
+  };
 
   const cargarDatos = async () => {
-    if (hasLoaded.current) return
-    
-    hasLoaded.current = true
-    
+    if (hasLoaded.current) return;
+    hasLoaded.current = true;
     try {
-      setLoading(true)
-      setError(null)
+      setLoading(true);
+      setError(null);
 
-      const response = await facturasAPI.getClientesConResumen()
-      const clientesData = response.data || []
-      const empresasProcesadas = procesarDatosClientes(clientesData)
-      
-      setEmpresas(empresasProcesadas)
-      setDataLoaded(true)
-    } catch (err) {
-      console.error('Error cargando datos del servidor:', err)
-      let errorMessage = 'Error al cargar los datos del servidor.'
-      
-      if (err.code === 'ECONNABORTED') {
-        errorMessage = 'La solicitud tardó más de 5 minutos en responder. El servidor está procesando un gran volumen de empresas. Intenta nuevamente o contacta al administrador si el problema persiste.'
-      } else if (err.code === 'ECONNREFUSED') {
-        errorMessage = 'No se puede conectar al backend. Verifica que esté ejecutándose en http://127.0.0.1:8000'
-      } else if (err.response) {
-        errorMessage = `Error del servidor: ${err.response.status} - ${err.response.statusText}`
-      } else if (err.request) {
-        errorMessage = 'No se recibió respuesta del servidor. Verifica la URL y el endpoint.'
-      } else {
-        errorMessage = `Error de conexión: ${err.message}`
+      const [respClientes, respAsign] = await Promise.all([
+        facturasAPI.getClientesConResumen(),
+        consultoresAPI.listAsignaciones().catch(() => ({ data: [] })),
+      ]);
+
+      const clientesData = respClientes.data || [];
+      const empresasProcesadas = procesarDatosClientes(clientesData);
+
+      const asignaciones = Array.isArray(respAsign.data) ? respAsign.data : [];
+      const mapAsign = new Map();
+      for (const a of asignaciones) {
+        mapAsign.set(String(a.idcliente), a);
       }
-      
-      setError(errorMessage)
-      
-      // Usar datos mock cuando la API falle para evitar errores en la UI
-      const mockEmpresas = [
-        {
-          id: 1,
-          nombre: 'SELIER BY ATISA SL',
-          cif: 'B12345678',
-          cif_empresa: 'B12345678',
-          idcliente: '001',
-          facturasPendientes: 3,
-          montoTotal: 15000.00,
-          estado: 'verde',
-          consultorAsignado: 'Allan Cantos Delgado'
-        },
-        {
-          id: 2,
-          nombre: 'EMPRESA EJEMPLO SA',
-          cif: 'B87654321',
-          cif_empresa: 'B87654321',
-          idcliente: '002',
-          facturasPendientes: 2,
-          montoTotal: 8500.00,
-          estado: 'amarillo',
-          consultorAsignado: null
-        },
-        {
-          id: 3,
-          nombre: 'CLIENTE TEST SL',
-          cif: 'B11223344',
-          cif_empresa: 'B11223344',
-          idcliente: '003',
-          facturasPendientes: 1,
-          montoTotal: 22000.00,
-          estado: 'rojo',
-          consultorAsignado: 'María García'
+      const empresasConAsign = empresasProcesadas.map((e) => {
+        const key = String(e.id) || String(e.idcliente);
+        let asign = mapAsign.get(key);
+        if (!asign && key) {
+          const n = parseInt(key, 10);
+          if (!Number.isNaN(n)) asign = mapAsign.get(String(n));
         }
-      ]
-      
-      setEmpresas(mockEmpresas)
-      setDataLoaded(true)
+        return asign ? { ...e, consultorAsignado: asign.consultor_nombre } : e;
+      });
+
+      setEmpresas(empresasConAsign);
+      setDataLoaded(true);
+    } catch (err) {
+      console.error('Error cargando datos del servidor:', err);
+      let errorMessage = 'Error al cargar los datos del servidor.';
+      if (err.code === 'ECONNABORTED') {
+        errorMessage = 'La solicitud tardó más de 5 minutos en responder. El servidor está procesando un gran volumen de empresas. Intenta nuevamente o contacta al administrador si el problema persiste.';
+      } else if (err.code === 'ECONNREFUSED') {
+        errorMessage = 'No se puede conectar al backend. Verifica que esté ejecutándose en http://127.0.0.1:8000';
+      } else if (err.response) {
+      } else if (err.response) {
+        errorMessage = 'Error del servidor: ' + String(err.response.status) + ' - ' + (err.response.statusText || '');
+      } else if (err.request) {
+        errorMessage = 'No se recibio respuesta del servidor. Verifica la URL y el endpoint.';
+      } else {
+        errorMessage = 'Error de conexion: ' + String(err.message || '');
+      }
+      setError(errorMessage);
+      // No usar datos mock: mantener vacÃ­o para evitar confusiones
+      setEmpresas([]);
+      setDataLoaded(true);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const recargarDatos = () => {
-    hasLoaded.current = false
-    cargarDatos()
-  }
+    hasLoaded.current = false;
+    cargarDatos();
+  };
 
-  // Función para guardar consultores en localStorage
-  const saveConsultoresToStorage = (newConsultores) => {
+  // Consultores
+  const cargarConsultores = async () => {
     try {
-      localStorage.setItem('atisa_consultores', JSON.stringify(newConsultores))
+      const { data } = await consultoresAPI.list(false);
+      setConsultores(Array.isArray(data) ? data : []);
     } catch (error) {
-      console.error('Error guardando consultores en localStorage:', error)
+      console.error('Error cargando consultores:', error);
+      setConsultores([]);
     }
-  }
+  };
 
-  // Función para agregar un nuevo consultor
-  const addConsultor = (consultor) => {
-    const newConsultor = {
-      ...consultor,
-      id: Date.now(), // ID único basado en timestamp
-      estado: 'activo'
+  const addConsultor = async (consultor) => {
+    const payload = {
+      nombre: consultor.nombre,
+      estado: consultor.estado || 'activo',
+    };
+    await consultoresAPI.create(payload);
+    await cargarConsultores();
+  };
+
+  const updateConsultor = async (id, updatedData) => {
+    const payload = {
+      nombre: updatedData.nombre,
+      estado: updatedData.estado || 'activo',
+    };
+    await consultoresAPI.update(id, payload);
+    await cargarConsultores();
+  };
+
+  const deleteConsultor = async (id) => {
+    await consultoresAPI.remove(id);
+    await cargarConsultores();
+  };
+
+  // AsignaciÃ³n
+  const asignarConsultorACliente = async (idcliente, consultorId) => {
+    await consultoresAPI.asignar({ idcliente: parseInt(idcliente, 10), consultor_id: parseInt(consultorId, 10) });
+    const c = consultores.find((x) => String(x.id) === String(consultorId));
+    if (c) {
+      setEmpresas((prev) =>
+        prev.map((e) => (String(e.id) === String(idcliente) || String(e.idcliente) === String(idcliente)) ? { ...e, consultorAsignado: c.nombre } : e)
+      );
     }
-    const updatedConsultores = [...consultores, newConsultor]
-    setConsultores(updatedConsultores)
-    saveConsultoresToStorage(updatedConsultores)
-  }
+  };
 
-  // Función para actualizar un consultor existente
-  const updateConsultor = (id, updatedData) => {
-    const updatedConsultores = consultores.map(consultor =>
-      consultor.id === id ? { ...consultor, ...updatedData } : consultor
-    )
-    setConsultores(updatedConsultores)
-    saveConsultoresToStorage(updatedConsultores)
-  }
-
-  // Función para eliminar un consultor
-  const deleteConsultor = (id) => {
-    const updatedConsultores = consultores.filter(consultor => consultor.id !== id)
-    setConsultores(updatedConsultores)
-    saveConsultoresToStorage(updatedConsultores)
-  }
-
+  // Facturas de empresa
   const getFacturasEmpresa = async (empresaId) => {
     try {
-      const response = await facturasAPI.getFacturasCliente(empresaId)
-      const facturasData = response.data || []
-      
-      return facturasData.map(factura => ({
-        id: factura.asiento,
-        numero: `${factura.tipo}-${factura.asiento}`,
-        vencimiento: factura.vencimiento?.split('T')[0] || '',
-        monto: parseFloat(factura.importe) || 0,
-        estado: factura.estado || (factura.check_pago === 1 ? 'pagado' : 'pendiente'),
-        tipo: factura.tipo,
-        sociedad: factura.sociedad,
-        tercero: factura.tercero,
-        forma_pago: factura.forma_pago,
-        nivel_reclamacion: factura.nivel_reclamacion,
-        fecha_reclamacion: factura.fecha_reclamacion?.split('T')[0] || '',
-        check_pago: factura.check_pago,
-        moneda: factura.moneda,
-        colectivo: factura.colectivo,
-        planta: factura.planta,
-        pago: factura.pago,
-        sentido: factura.sentido
-      }))
+      const response = await facturasAPI.getFacturasCliente(empresaId);
+      const facturasData = Array.isArray(response.data) ? response.data : [];
+      return facturasData.map((factura, idx) => {
+        const venc = factura && factura.vencimiento ? String(factura.vencimiento) : '';
+        const fecRec = factura && factura.fecha_reclamacion ? String(factura.fecha_reclamacion) : '';
+        const importeNum = Number(factura?.importe) || 0;
+        const pagoNum = Number(factura?.pago) || 0;
+        const pendienteNum = Number(typeof factura?.pendiente === 'number' ? factura.pendiente : importeNum - pagoNum);
+        return {
+          id: factura?.asiento ?? `${factura?.tipo || 'X'}-${idx}`,
+          numero: `${factura?.tipo || 'X'}-${factura?.asiento ?? idx}`,
+          nombre_factura: factura?.nombre_factura || null,
+          vencimiento: venc ? venc.split('T')[0] : '',
+          monto: importeNum,
+          estado: factura.estado || (factura.check_pago === 1 ? 'pagado' : 'pendiente'),
+          tipo: factura.tipo,
+          sociedad: factura.sociedad,
+          sociedad_nombre: factura.sociedad_nombre || null,
+          tercero: factura.tercero,
+          forma_pago: factura.forma_pago,
+          nivel_reclamacion: factura.nivel_reclamacion,
+          fecha_reclamacion: fecRec ? fecRec.split('T')[0] : '',
+          check_pago: factura.check_pago,
+          moneda: factura.moneda,
+          colectivo: factura.colectivo,
+          planta: factura.planta,
+          pago: pagoNum,
+          pendiente: pendienteNum > 0 ? pendienteNum : 0,
+          sentido: factura.sentido,
+        };
+      });
     } catch (err) {
-      console.error('Error cargando facturas de empresa:', err)
-      return []
+      console.error('Error cargando facturas de empresa:', err);
+      return [];
     }
-  }
+  };
+
+  // Historial
+  const getHistorialFactura = async ({ tercero, tipo, asiento }) => {
+    try {
+      const { data } = await historialAPI.list({ tercero, tipo, asiento, limit: 100 });
+      return Array.isArray(data) ? data : [];
+    } catch (err) {
+      console.error('Error obteniendo historial:', err);
+      return [];
+    }
+  };
+
+  const registrarEventoHistorial = async (payload) => {
+    try {
+      const { data } = await historialAPI.add(payload);
+      return data;
+    } catch (err) {
+      console.error('Error registrando evento de historial:', err);
+      throw err;
+    }
+  };
+
+  // Acciones
+  const getAcciones = async ({ idcliente, tercero, tipo, asiento, limit = 200 }) => {
+    try {
+      const { data } = await registroAPI.listAcciones({ idcliente, tercero, tipo, asiento, limit });
+      return Array.isArray(data) ? data : [];
+    } catch (err) {
+      console.error('Error obteniendo acciones:', err);
+      return [];
+    }
+  };
+
+  const registrarAccion = async ({ idcliente, tercero, tipo, asiento, accion_tipo, descripcion, aviso, usuario }) => {
+    try {
+      const { data } = await registroAPI.addAccion({ idcliente, tercero, tipo, asiento, accion_tipo, descripcion, aviso, usuario });
+      return data;
+    } catch (err) {
+      console.error('Error registrando acciÃ³n:', err);
+      throw err;
+    }
+  };
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      cargarDatos()
-    }, 1000)
+    const run = async () => {
+      await Promise.all([cargarConsultores(), cargarDatos()]);
+    };
+    run();
+  }, []);
 
-    return () => clearTimeout(timer)
-  }, [])
+  useEffect(() => {
+    const reqId = api.interceptors.request.use((cfg) => {
+      setApiBusy((c) => c + 1);
+      return cfg;
+    });
+    const resId = api.interceptors.response.use(
+      (resp) => {
+        setApiBusy((c) => Math.max(0, c - 1));
+        setApiError(null);
+        setApiLastOk(Date.now());
+        return resp;
+      },
+      (err) => {
+        setApiBusy((c) => Math.max(0, c - 1));
+        const msg = err?.response ? (String(err.response.status) + (err.response.statusText ? ' ' + err.response.statusText : '')) : (err?.message || 'Error de conexion');
+        setApiError(msg);
+        return Promise.reject(err);
+      }
+    );
+    return () => {
+      api.interceptors.request.eject(reqId);
+      api.interceptors.response.eject(resId);
+    };
+  }, []);
 
   const value = {
     empresas,
@@ -211,14 +266,28 @@ export const DataProvider = ({ children }) => {
     dataLoaded,
     recargarDatos,
     getFacturasEmpresa,
+    asignarConsultorACliente,
+    getHistorialFactura,
+    registrarEventoHistorial,
+    getAcciones,
+    registrarAccion,
     addConsultor,
     updateConsultor,
-    deleteConsultor
-  }
+    deleteConsultor,
+    apiBusy,
+    apiError,
+    apiLastOk,
+};
 
-  return (
-    <DataContext.Provider value={value}>
-      {children}
-    </DataContext.Provider>
-  )
-} 
+  return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
+};
+
+export default DataContext;
+
+
+
+
+
+
+
+

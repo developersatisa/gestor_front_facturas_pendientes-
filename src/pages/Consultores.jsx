@@ -28,20 +28,18 @@ const Consultores = () => {
     setShowConfirmModal(true)
   }
 
-  const confirmDeleteConsultor = () => {
+  const confirmDeleteConsultor = async () => {
     if (consultorToDelete) {
-      deleteConsultor(consultorToDelete.id)
+      await deleteConsultor(consultorToDelete.id)
       setConsultorToDelete(null)
     }
   }
 
-  const handleSaveConsultor = (consultorData) => {
+  const handleSaveConsultor = async (consultorData) => {
     if (editingConsultor) {
-      // Editar consultor existente
-      updateConsultor(editingConsultor.id, consultorData)
+      await updateConsultor(editingConsultor.id, consultorData)
     } else {
-      // Agregar nuevo consultor
-      addConsultor(consultorData)
+      await addConsultor(consultorData)
     }
     setShowModal(false)
   }
