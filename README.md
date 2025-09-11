@@ -259,6 +259,21 @@ facturas_frontend/
 - **Service Layer**: Separación de responsabilidades
 - **Container/Presentational**: Separación de lógica y presentación
 
+## 📌 Estado actual del frontend (resumen)
+
+- Dashboard:
+  - Card “Deuda por Cliente” alimentada por `sociedades_con_montos` de `/api/estadisticas`.
+  - “Próximos Avisos” ocupa toda la fila superior.
+  - “Historial: Facturas más vencidas” con paginación (5 por página).
+- Vista “Empresas”:
+  - Cada card muestra las sociedades y su deuda (top 3), con “+N más” si aplica.
+  - Filtros activos: buscador y consultor; sin filtro por sociedad.
+- Vista “Facturas por empresa”:
+  - Select moderno de sociedades, alineado al toggle “Ambos / Solo facturas / Solo abonos”, mostrando deuda y nº de facturas por sociedad.
+  - Crear/editar/eliminar facturas deshabilitado (sin botón, sin iconos, sin modal).
+  - Acciones: “Fecha de aviso” obligatoria y mensajes de error inline; “Acción registrada por” es un select de consultores (por defecto, el consultor asignado, editable).
+- Header: el indicador de red permite “probar conexión” al backend.
+
 ## 📱 Funcionalidades Detalladas
 
 ### 🎛️ **Dashboard Principal**
