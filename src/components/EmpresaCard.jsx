@@ -1,8 +1,51 @@
-import React from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Building2, FileText, Euro, User } from 'lucide-react'
 import Card from './Card'
+import { useData } from '../context/DataContext'
+// Mapeo de nombres amigables por sociedad
+const SOC_NAMES = {
+  S005: 'Grupo Atisa BPO',
+  S001: 'Asesores Titulados',
+  S010: 'Selier by Atisa',
+}
 
 const EmpresaCard = ({ empresa, onAsignarConsultor, onGestionarFacturas, formatearMoneda }) => {
+  const { getFacturasEmpresa } = useData()
+  const [socResumen, setSocResumen] = useState([]) // [{codigo, nombre, cantidad, pendiente}]
+  const [loadedFor, setLoadedFor] = useState(null)
+
+  useEffect(() => {
+    const load = async () => {
+      const empresaId = empresa?.id || empresa?.idcliente
+      if (!empresaId || loadedFor === empresaId) return
+      try {
+        const facts = await getFacturasEmpresa(empresaId)
+        const map = new Map()
+        for (const f of facts) {
+          const codigo = (f?.sociedad || '').trim()
+          if (!codigo) continue
+          const nombre = f?.sociedad_nombre || codigo
+          const importe = Number(f?.monto) || 0
+          const pago = Number(f?.pago) || 0
+          const pendiente = typeof f?.pendiente === 'number' ? Number(f.pendiente) : Math.max(0, importe - pago)
+          const prev = map.get(codigo) || { codigo, nombre, cantidad: 0, pendiente: 0 }
+          prev.cantidad += 1
+          prev.pendiente += pendiente
+          map.set(codigo, prev)
+        }
+        const lista = Array.from(map.values()).sort((a, b) => b.pendiente - a.pendiente)
+        setSocResumen(lista)
+        setLoadedFor(empresaId)
+      } catch (_) {
+        setSocResumen([])
+      }
+    }
+    load()
+  }, [empresa?.id, empresa?.idcliente, getFacturasEmpresa, loadedFor])
+
+  const topSociedades = useMemo(() => socResumen.slice(0, 3), [socResumen])
+  const restantes = Math.max(0, socResumen.length - topSociedades.length)
+
   return (
     <Card className="hover:shadow-lg transition-shadow duration-200">
       {/* Header */}
@@ -52,6 +95,42 @@ const EmpresaCard = ({ empresa, onAsignarConsultor, onGestionarFacturas, formate
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Sociedades resumen con importes */}
+      <div className="mb-6">
+        <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Sociedades</p>
+        {socResumen.length === 0 ? (
+          <p className="text-xs text-gray-500 dark:text-gray-400">Sin datos de sociedades</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {topSociedades.map((s) => (
+              <span
+                key={s.codigo}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs border ${
+                  s.codigo === 'S005' ? 'bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-900/40 dark:text-teal-100 dark:border-teal-800' :
+                  s.codigo === 'S001' ? 'bg-indigo-100 text-indigo-800 border-indigo-200 dark:bg-indigo-900/40 dark:text-indigo-100 dark:border-indigo-800' :
+                  s.codigo === 'S010' ? 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/40 dark:text-amber-100 dark:border-amber-800' :
+                  'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700'
+                }`}
+                title={`${s.codigo} — ${SOC_NAMES[s.codigo] || s.nombre}`}
+              >
+                <span className="font-semibold">{SOC_NAMES[s.codigo] || s.nombre}</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/60 dark:bg-black/30 border border-white/80 dark:border-gray-600" title="Nº facturas">
+                  {s.cantidad}
+                </span>
+                <span className="text-[11px] font-medium" title="Importe pendiente">
+                  {formatearMoneda(s.pendiente)}
+                </span>
+              </span>
+            ))}
+            {restantes > 0 && (
+              <span className="inline-flex items-center px-2 py-1.5 rounded-full text-xs bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                +{restantes} más
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Acciones */}

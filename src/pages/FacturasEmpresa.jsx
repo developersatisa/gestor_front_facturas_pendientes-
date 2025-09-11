@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Edit, Trash2, FileText, Bell, Mail, User, Calendar, History } from 'lucide-react'
 import Card from '../components/Card'
@@ -24,10 +24,12 @@ const FacturasEmpresa = () => {
   const [acciones, setAcciones] = useState([])
   const [showAccionForm, setShowAccionForm] = useState({})
   const [editingAccion, setEditingAccion] = useState(null)
+  const [accionFormErrors, setAccionFormErrors] = useState({})
   const [accionFormData, setAccionFormData] = useState({
     descripcion: '',
     tipo: 'Email',
-    aviso: ''
+    aviso: '',
+    usuario: ''
   })
   const [showDatePicker, setShowDatePicker] = useState(false)
   const [selectedDate, setSelectedDate] = useState('')
@@ -42,6 +44,20 @@ const FacturasEmpresa = () => {
   const [showHistorialModal, setShowHistorialModal] = useState(false)
   const [historialMode, setHistorialMode] = useState('pagada') // 'pagada' | 'aplazar'
   const [selectedFactura, setSelectedFactura] = useState(null)
+  // Helpers visuales para sociedades
+  const socEmoji = (code) => (code === 'S005' ? '🟩' : code === 'S001' ? '🟦' : code === 'S010' ? '🟨' : '⚪')
+  const socDotCls = (code) => (
+    code === 'S005' ? 'bg-teal-500' : code === 'S001' ? 'bg-indigo-500' : code === 'S010' ? 'bg-amber-500' : 'bg-gray-400'
+  )
+  const [openSocSelect, setOpenSocSelect] = useState(false)
+  const socSelectRef = useRef(null)
+  useEffect(() => {
+    const handler = (e) => {
+      if (socSelectRef.current && !socSelectRef.current.contains(e.target)) setOpenSocSelect(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   const empresa = empresas.find(e => e.id === id)
   const consultor = consultores.find(c => c.nombre === (empresa?.consultorAsignado || '').trim())
@@ -276,6 +292,26 @@ const FacturasEmpresa = () => {
   const totalAbonos = abonos.reduce((sum, a) => sum + Math.abs(Number(a.monto) || 0), 0)
   const totalPendienteReal = totalPendienteFacturas - totalAbonos
 
+  // Resumen de sociedades presentes (independiente del filtro actual)
+  const sociedadesResumenAll = React.useMemo(() => {
+    const map = new Map()
+    // Usar todas las facturas no-abono sin aplicar sociedadFilter para que el select no se "encoja"
+    for (const f of facturas) {
+      const esAb = Number(f.check_pago) === -1 || Number(f.sentido) === -1 || Number(f.monto) < 0
+      if (esAb) continue
+      const codigo = (f?.sociedad || '').trim() || 'N/D'
+      const nombre = (f?.sociedad_nombre || f?.sociedad || 'N/D').toString()
+      const importe = Number(f?.monto) || 0
+      const pago = Number(f?.pago) || 0
+      const pendiente = typeof f?.pendiente === 'number' ? Number(f.pendiente) : Math.max(0, importe - pago)
+      const prev = map.get(codigo) || { codigo, nombre, cantidad: 0, pendiente: 0 }
+      prev.cantidad += 1
+      prev.pendiente += pendiente
+      map.set(codigo, prev)
+    }
+    return Array.from(map.values()).sort((a, b) => b.pendiente - a.pendiente)
+  }, [facturas])
+
   const handleAddFactura = () => {
     if (!hasConsultor) {
       alert('No se puede añadir facturas sin un consultor asignado.')
@@ -312,6 +348,9 @@ const FacturasEmpresa = () => {
     // }
     setShowAccionForm(prev => ({ ...prev, [facturaId]: true }))
     setEditingAccion(null)
+    const defaultUsuario = (consultor?.nombre) || (Array.isArray(consultores) && consultores.length > 0 ? (consultores[0]?.nombre || 'Usuario') : 'Usuario')
+    setAccionFormData(prev => ({ ...prev, usuario: defaultUsuario }))
+    setAccionFormErrors(prev => ({ ...prev, [facturaId]: '' }))
   }
 
   const handleSaveFactura = (facturaData) => {
@@ -409,7 +448,14 @@ const FacturasEmpresa = () => {
 
   const handleAccionFormSubmit = (e, facturaId) => {
     e.preventDefault()
-    if (!accionFormData.descripcion.trim()) return
+    if (!accionFormData.descripcion.trim()) {
+      setAccionFormErrors(prev => ({ ...prev, [facturaId]: 'La descripción de la acción es obligatoria.' }))
+      return
+    }
+    if (!accionFormData.aviso) {
+      setAccionFormErrors(prev => ({ ...prev, [facturaId]: 'Selecciona una fecha de aviso (obligatoria).' }))
+      return
+    }
 
     const [tipoFactura, asientoFactura] = String(facturaId).split('-')
     const payload = {
@@ -419,8 +465,8 @@ const FacturasEmpresa = () => {
       asiento: asientoFactura || '',
       accion_tipo: accionFormData.tipo || 'Otro',
       descripcion: accionFormData.descripcion,
-      aviso: accionFormData.aviso || undefined,
-      usuario: consultor?.nombre || 'Usuario',
+      aviso: accionFormData.aviso,
+      usuario: (accionFormData.usuario && accionFormData.usuario.trim()) || consultor?.nombre || 'Usuario',
     }
     registrarAccion(payload)
       .then(() => getAcciones({ idcliente: payload.idcliente }))
@@ -556,6 +602,7 @@ const FacturasEmpresa = () => {
                 )}
               </p>
             </div>
+            {false && (
             <div className="ml-auto">
               <button
                 onClick={handleAddFactura}
@@ -570,6 +617,7 @@ const FacturasEmpresa = () => {
                 <span>Añadir Factura</span>
               </button>
             </div>
+            )}
           </div>
           
           {/* Search Bar */}
@@ -579,55 +627,97 @@ const FacturasEmpresa = () => {
               value={searchTerm}
               onChange={setSearchTerm}
             />
-            {/* Selector de sociedades (select) */}
-            <div className="mt-3">
-              <select
-                className="input-field w-64 border-gray-300 dark:border-gray-700 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
-                value={sociedadFilter}
-                onChange={(e) => setSociedadFilter(e.target.value)}
-                title="Filtrar por sociedad"
-              >
-                <option value="">Todas las sociedades</option>
-                <option value="S005">Grupo Atisa BPO (S005)</option>
-                <option value="S001">Asesores Titulados (S001)</option>
-                <option value="S010">Selier by Atisa (S010)</option>
-              </select>
-            </div>
-            {/* Toggle tipo: Facturas / Abonos / Ambos */}
-            <div className="mt-4 inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden">
-              <button
-                type="button"
-                className={`px-4 py-1.5 text-sm font-medium transition-colors ${
-                  tipoFiltro === 'ambos'
-                    ? 'bg-[#0A5C63] text-white'
-                    : 'bg-gray-100 text-gray-800 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
-                }`}
-                onClick={() => setTipoFiltro('ambos')}
-              >
-                Ambos
-              </button>
-              <button
-                type="button"
-                className={`px-4 py-1.5 text-sm font-medium border-l border-gray-300 dark:border-gray-700 transition-colors ${
-                  tipoFiltro === 'facturas'
-                    ? 'bg-[#0A5C63] text-white'
-                    : 'bg-gray-100 text-gray-800 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
-                }`}
-                onClick={() => setTipoFiltro('facturas')}
-              >
-                Solo facturas
-              </button>
-              <button
-                type="button"
-                className={`px-4 py-1.5 text-sm font-medium border-l border-gray-300 dark:border-gray-700 transition-colors ${
-                  tipoFiltro === 'abonos'
-                    ? 'bg-[#0A5C63] text-white'
-                    : 'bg-gray-100 text-gray-800 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
-                }`}
-                onClick={() => setTipoFiltro('abonos')}
-              >
-                Solo abonos
-              </button>
+            {/* Selector de sociedades (se reubica junto al toggle inferior) */}
+            {/* Toggle tipo + Select sociedades en una sola fila */}
+            <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden">
+                <button
+                  type="button"
+                  className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+                    tipoFiltro === 'ambos'
+                      ? 'bg-[#0A5C63] text-white'
+                      : 'bg-gray-100 text-gray-800 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
+                  }`}
+                  onClick={() => setTipoFiltro('ambos')}
+                >
+                  Ambos
+                </button>
+                <button
+                  type="button"
+                  className={`px-4 py-1.5 text-sm font-medium border-l border-gray-300 dark:border-gray-700 transition-colors ${
+                    tipoFiltro === 'facturas'
+                      ? 'bg-[#0A5C63] text-white'
+                      : 'bg-gray-100 text-gray-800 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
+                  }`}
+                  onClick={() => setTipoFiltro('facturas')}
+                >
+                  Solo facturas
+                </button>
+                <button
+                  type="button"
+                  className={`px-4 py-1.5 text-sm font-medium border-l border-gray-300 dark:border-gray-700 transition-colors ${
+                    tipoFiltro === 'abonos'
+                      ? 'bg-[#0A5C63] text-white'
+                      : 'bg-gray-100 text-gray-800 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
+                  }`}
+                  onClick={() => setTipoFiltro('abonos')}
+                >
+                  Solo abonos
+                </button>
+              </div>
+              {/* Select moderno de sociedades (custom dropdown para no truncar) */}
+              <div ref={socSelectRef} className="relative w-full sm:w-[28rem]">
+                <button
+                  type="button"
+                  onClick={() => setOpenSocSelect((v) => !v)}
+                  className="w-full flex items-center justify-between gap-3 pl-8 pr-9 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-left hover:bg-gray-50 dark:hover:bg-gray-750 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                  aria-haspopup="listbox"
+                  aria-expanded={openSocSelect}
+                >
+                  <span className={`absolute left-3 inline-block w-2.5 h-2.5 rounded-full ${sociedadFilter ? socDotCls(sociedadFilter) : 'bg-gray-400'}`}></span>
+                  <span className="flex-1 whitespace-normal break-words">
+                    {(() => {
+                      const s = sociedadesResumenAll.find(x => x.codigo === sociedadFilter)
+                      return s
+                        ? `${s.codigo} — ${s.nombre || s.codigo} · ${formatearMoneda(s.pendiente)} · ${s.cantidad} facs`
+                        : 'Todas las sociedades'
+                    })()}
+                  </span>
+                  <svg className="w-4 h-4 text-gray-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                {openSocSelect && (
+                  <ul
+                    role="listbox"
+                    className="absolute z-10 mt-2 w-full max-h-64 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg"
+                  >
+                    <li
+                      role="option"
+                      aria-selected={sociedadFilter === ''}
+                      onClick={() => { setSociedadFilter(''); setOpenSocSelect(false) }}
+                      className={`cursor-pointer px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-700 ${sociedadFilter === '' ? 'bg-gray-50 dark:bg-gray-700/50' : ''}`}
+                    >
+                      <span className="inline-block w-2.5 h-2.5 rounded-full bg-gray-400"></span>
+                      <span className="whitespace-normal break-words">Todas las sociedades</span>
+                    </li>
+                    {sociedadesResumenAll.map((s) => (
+                      <li
+                        key={s.codigo}
+                        role="option"
+                        aria-selected={sociedadFilter === s.codigo}
+                        onClick={() => { setSociedadFilter(s.codigo); setOpenSocSelect(false) }}
+                        className={`cursor-pointer px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-700 ${sociedadFilter === s.codigo ? 'bg-gray-50 dark:bg-gray-700/50' : ''}`}
+                      >
+                        <span className={`inline-block w-2.5 h-2.5 rounded-full ${socDotCls(s.codigo)}`}></span>
+                        <span className="flex-1 whitespace-normal break-words">
+                          {`${s.codigo} — ${s.nombre || s.codigo} · ${formatearMoneda(s.pendiente)} · ${s.cantidad} facs`}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           </div>
           {/* Resumen de totales */}
@@ -645,6 +735,8 @@ const FacturasEmpresa = () => {
               <div className={`text-xl font-bold ${totalPendienteReal >= 0 ? 'text-gray-900 dark:text-white' : 'text-red-500'}`}>{formatearMoneda(totalPendienteReal)}</div>
             </div>
           </div>
+
+          {/* (El box de sociedades se ha eliminado, la info se muestra en el select) */}
         </div>
 
         {/* Facturas List */}
@@ -766,16 +858,37 @@ const FacturasEmpresa = () => {
                       {/* Formulario de acción */}
                       {showAccionForm[factura.numero] ? (
                         <div className="bg-gray-100 dark:bg-[#1f2937] rounded-xl border border-gray-200 dark:border-gray-700 p-6 mt-4">
-                          <form onSubmit={(e) => handleAccionFormSubmit(e, factura.numero)} className="space-y-6">
-                            {/* Información del consultor */}
+                          <form noValidate onSubmit={(e) => handleAccionFormSubmit(e, factura.numero)} className="space-y-6">
+                            {/* Usuario que registra la acción (select de consultores) */}
                             <div className="bg-gray-200 dark:bg-[#374151] rounded-lg p-4">
                               <div className="flex items-center space-x-3 mb-2">
                                 <User className="w-4 h-4 text-teal-600 dark:text-teal-400" />
                                 <span className="text-sm text-gray-600 dark:text-gray-400">Acción registrada por:</span>
                               </div>
-                              <p className="text-gray-900 dark:text-white font-medium">
-                                {consultor?.nombre || 'Usuario'}
-                              </p>
+                              <select
+                                name="usuario"
+                                value={accionFormData.usuario || consultor?.nombre || 'Usuario'}
+                                onChange={handleAccionFormChange}
+                                className="w-full bg-white dark:bg-[#1f2937] border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-white rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer"
+                                title="Selecciona el usuario que registra la acción"
+                              >
+                                {(() => {
+                                  const assigned = consultor?.nombre || null
+                                  const names = []
+                                  if (assigned) names.push(assigned)
+                                  if (Array.isArray(consultores)) {
+                                    for (const c of consultores) {
+                                      const n = c?.nombre
+                                      if (n && n !== assigned) names.push(n)
+                                    }
+                                  }
+                                  if (names.length === 0) names.push('Usuario')
+                                  return names.map(n => (
+                                    <option key={n} value={n}>{n}{assigned === n ? ' (asignado)' : ''}</option>
+                                  ))
+                                })()}
+                              </select>
+                              <p className="text-[11px] text-gray-600 dark:text-gray-400 mt-1">Por defecto, el consultor asignado. Puedes cambiarlo.</p>
                             </div>
 
                             {/* Descripción de la acción */}
@@ -790,7 +903,6 @@ const FacturasEmpresa = () => {
                                 rows={4}
                                 className="w-full bg-white dark:bg-[#374151] border border-gray-300 dark:border-gray-600 text-gray-900 dark:text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition-all duration-200 hover:border-gray-400 dark:hover:border-gray-500 placeholder-gray-500 dark:placeholder-gray-400 resize-none"
                                 placeholder="Describe la acción realizada..."
-                                required
                               />
                             </div>
 
@@ -811,10 +923,10 @@ const FacturasEmpresa = () => {
                               </select>
                             </div>
 
-                            {/* Fecha de aviso */}
+                            {/* Fecha de aviso (obligatoria) */}
                             <div>
                               <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
-                                Fecha de aviso (opcional)
+                                Fecha de aviso
                               </label>
                               <div className="relative date-picker-container">
                                 <button
@@ -919,9 +1031,7 @@ const FacturasEmpresa = () => {
                                 )}
                               </div>
                               <div className="flex items-center justify-between mt-2">
-                                <p className="text-xs text-gray-500">
-                                  Deja vacío si no necesitas un aviso programado
-                                </p>
+                                <p className="text-xs text-gray-500">Campo obligatorio</p>
                                 {accionFormData.aviso && (
                                   <span className="text-xs text-teal-600 dark:text-teal-400 font-medium">
                                     ✓ Aviso configurado
@@ -929,6 +1039,16 @@ const FacturasEmpresa = () => {
                                 )}
                               </div>
                             </div>
+
+                            {/* Mensajes de error bonitos */}
+                            {accionFormErrors[factura.numero] && (
+                              <div className="mt-2 p-3 rounded-lg border border-red-300 bg-red-50 dark:bg-red-900/20 dark:border-red-700 flex items-start gap-2">
+                                <svg className="w-4 h-4 text-red-600 dark:text-red-400 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.72-1.36 3.485 0l6.518 11.59c.75 1.336-.213 2.99-1.742 2.99H3.48c-1.53 0-2.492-1.654-1.743-2.99L8.257 3.1zM11 14a1 1 0 10-2 0 1 1 0 002 0zm-.25-6.75a.75.75 0 00-1.5 0v4.5a.75.75 0 001.5 0v-4.5z" clipRule="evenodd" />
+                                </svg>
+                                <p className="text-sm text-red-700 dark:text-red-300">{accionFormErrors[factura.numero]}</p>
+                              </div>
+                            )}
 
                             {/* Botones */}
                             <div className="flex space-x-3 pt-4">
@@ -959,24 +1079,8 @@ const FacturasEmpresa = () => {
                     </div>
                   </div>
 
-                  {/* Right side - Actions */}
-                  <div className="flex items-center space-x-4 ml-6">
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => handleEditFactura(factura)}
-                        className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 transition-colors"
-                      >
-                        <Edit className="w-4 h-4 text-gray-600 dark:text-white" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteFactura(factura)}
-                        className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4 text-gray-600 dark:text-white" />
-                      </button>
-                    </div>
-                    <div />
-                  </div>
+                  {/* Right side - Actions (editar/eliminar factura deshabilitados) */}
+                  <div className="flex items-center space-x-4 ml-6" />
                 </div>
                 {openHistorial[factura.id] && (
                   <div className="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
@@ -1034,13 +1138,7 @@ const FacturasEmpresa = () => {
           ))}
 
         {/* Modals */}
-        {showFacturaModal && (
-          <FacturaModal
-            factura={editingFactura}
-            onSave={handleSaveFactura}
-            onClose={() => setShowFacturaModal(false)}
-          />
-        )}
+        {/* Edición/creación de factura deshabilitada */}
 
         {/* Modal de Asignar Consultor */}
         {showAsignarConsultorModal && (
@@ -1089,3 +1187,5 @@ const FacturasEmpresa = () => {
 }
 
 export default FacturasEmpresa 
+
+

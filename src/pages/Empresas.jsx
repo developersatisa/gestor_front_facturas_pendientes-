@@ -17,7 +17,7 @@ const Empresas = () => {
   const [currentPage, setCurrentPage] = useState(1)
   const empresasPerPage = 9
 
-  // Filtrar empresas
+  // Filtrar empresas por búsqueda y consultor
   const empresasFiltradas = empresas.filter(empresa => {
     const matchesSearch = empresa.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          empresa.cif.toLowerCase().includes(searchTerm.toLowerCase()) ||

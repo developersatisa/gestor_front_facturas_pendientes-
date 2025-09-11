@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Building2, FileText, Euro, RefreshCw } from 'lucide-react'
 import Card from '../components/Card'
 import { useEstadisticas } from '../hooks/useEstadisticas'
@@ -6,9 +6,21 @@ import { useEstadisticas } from '../hooks/useEstadisticas'
 const Dashboard = () => {
   const { estadisticas, loading, error, recargarEstadisticas } = useEstadisticas()
   const { total_empresas_pendientes, total_facturas_pendientes, monto_total_adeudado, empresas_con_montos } = estadisticas
+  const sociedades_con_montos = estadisticas?.sociedades_con_montos || []
+  const facturas_mas_vencidas = estadisticas?.facturas_mas_vencidas || []
+  const [pageVencidas, setPageVencidas] = useState(1)
+  const perPageVencidas = 5
+  useEffect(() => { setPageVencidas(1) }, [facturas_mas_vencidas?.length])
+  const paginasVencidas = Math.max(1, Math.ceil((facturas_mas_vencidas?.length || 0) / perPageVencidas))
+  const itemsVencidas = useMemo(() => {
+    const start = (pageVencidas - 1) * perPageVencidas
+    return facturas_mas_vencidas.slice(start, start + perPageVencidas)
+  }, [facturas_mas_vencidas, pageVencidas])
   
   // Calcular deuda por empresa (top 4)
   const deudaPorEmpresa = empresas_con_montos.slice(0, 4)
+
+  // Eliminado el fallback para evitar 404 cuando no existen endpoints auxiliares
 
   const formatearMoneda = (valor) => {
     return new Intl.NumberFormat('es-ES', {
@@ -105,10 +117,42 @@ const Dashboard = () => {
 
         {/* Contenido */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Próximos Avisos */}
-          <Card>
+          {/* Próximos Avisos (ocupa todo el ancho) */}
+          <Card className="lg:col-span-2">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">Próximos Avisos</h2>
             <p className="text-gray-600 dark:text-gray-400 text-center py-8">No hay avisos programados.</p>
+          </Card>
+
+          {/* Deuda por Cliente */}
+          <Card>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">Deuda por Cliente</h2>
+            <div className="space-y-4">
+              {sociedades_con_montos && sociedades_con_montos.length > 0 && (
+                sociedades_con_montos.map((soc) => {
+                  const totalSoc = sociedades_con_montos.reduce((acc, s) => acc + s.monto, 0) || 1
+                  const porcentaje = (soc.monto / totalSoc) * 100
+                  return (
+                    <div key={soc.codigo} className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm font-medium text-gray-900 dark:text-white">{soc.nombre || soc.codigo}</span>
+                        <span className="text-sm font-bold text-red-400">
+                          {formatearMoneda(soc.monto)}
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div
+                          className="bg-teal-500 h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${porcentaje}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+              {(!sociedades_con_montos || sociedades_con_montos.length === 0) && (
+                <p className="text-gray-600 dark:text-gray-400 text-center py-4">No hay datos de sociedades.</p>
+              )}
+            </div>
           </Card>
 
           {/* Deuda por Empresa */}
@@ -135,6 +179,60 @@ const Dashboard = () => {
                 )
               })}
             </div>
+          </Card>
+
+          {/* Facturas más vencidas (de mayor a menor) */}
+          <Card className="lg:col-span-2">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">Historial: Facturas más vencidas</h2>
+            {!facturas_mas_vencidas || facturas_mas_vencidas.length === 0 ? (
+              <p className="text-gray-600 dark:text-gray-400 text-center py-8">No hay facturas vencidas para mostrar.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-600 dark:text-gray-400">
+                      <th className="py-2 pr-4">Sociedad</th>
+                      <th className="py-2 pr-4">Tercero</th>
+                      <th className="py-2 pr-4">Vencimiento</th>
+                      <th className="py-2 pr-4">Días vencidos</th>
+                      <th className="py-2 pr-4 text-right">Pendiente</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {itemsVencidas.map((f, idx) => (
+                      <tr key={`${f.tipo}-${f.asiento}-${idx}`} className="border-t border-gray-200 dark:border-gray-700">
+                        <td className="py-2 pr-4">{f.sociedad}</td>
+                        <td className="py-2 pr-4">{f.tercero}</td>
+                        <td className="py-2 pr-4">{String(f.vencimiento).split('T')[0]}</td>
+                        <td className="py-2 pr-4">{f.dias_vencidos}</td>
+                        <td className="py-2 pl-4 text-right font-semibold">{formatearMoneda(f.pendiente || 0)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="flex items-center justify-between mt-4">
+                  <span className="text-xs text-gray-600 dark:text-gray-400">
+                    Página {pageVencidas} de {paginasVencidas}
+                  </span>
+                  <div className="space-x-2">
+                    <button
+                      className="px-3 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 disabled:opacity-50"
+                      onClick={() => setPageVencidas((p) => Math.max(1, p - 1))}
+                      disabled={pageVencidas <= 1}
+                    >
+                      Anterior
+                    </button>
+                    <button
+                      className="px-3 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 disabled:opacity-50"
+                      onClick={() => setPageVencidas((p) => Math.min(paginasVencidas, p + 1))}
+                      disabled={pageVencidas >= paginasVencidas}
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </Card>
         </div>
       </div>

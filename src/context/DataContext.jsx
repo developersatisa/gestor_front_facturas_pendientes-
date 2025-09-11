@@ -18,6 +18,7 @@ export const DataProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const [dataLoaded, setDataLoaded] = useState(false);
   const hasLoaded = useRef(false);
+  const facturasCache = useRef(new Map());
 
   // Estado global de red (badge Header)
   const [apiBusy, setApiBusy] = useState(0);
@@ -34,7 +35,8 @@ export const DataProvider = ({ children }) => {
       idcliente: cliente.idcliente?.trim() || '',
       facturasPendientes: cliente.numero_facturas || 0,
       montoTotal: parseFloat(cliente.monto_debe) || 0,
-      consultorAsignado: null,
+      consultorAsignado: cliente.consultor_asignado || null,
+      sociedades: Array.isArray(cliente.sociedades) ? cliente.sociedades : [],
     }));
   };
 
@@ -96,6 +98,7 @@ export const DataProvider = ({ children }) => {
 
   const recargarDatos = () => {
     hasLoaded.current = false;
+    try { facturasCache.current.clear(); } catch (e) {}
     cargarDatos();
   };
 
@@ -144,12 +147,17 @@ export const DataProvider = ({ children }) => {
     }
   };
 
-  // Facturas de empresa
-  const getFacturasEmpresa = async (empresaId) => {
+  // Facturas de empresa (memoizadas por id)
+  const getFacturasEmpresa = React.useCallback(async (empresaId) => {
     try {
+      if (!empresaId) return [];
+      const key = String(empresaId);
+      if (facturasCache.current.has(key)) {
+        return facturasCache.current.get(key);
+      }
       const response = await facturasAPI.getFacturasCliente(empresaId);
       const facturasData = Array.isArray(response.data) ? response.data : [];
-      return facturasData.map((factura, idx) => {
+      const mapeadas = facturasData.map((factura, idx) => {
         const venc = factura && factura.vencimiento ? String(factura.vencimiento) : '';
         const fecRec = factura && factura.fecha_reclamacion ? String(factura.fecha_reclamacion) : '';
         const importeNum = Number(factura?.importe) || 0;
@@ -178,11 +186,13 @@ export const DataProvider = ({ children }) => {
           sentido: factura.sentido,
         };
       });
+      facturasCache.current.set(key, mapeadas);
+      return mapeadas;
     } catch (err) {
       console.error('Error cargando facturas de empresa:', err);
       return [];
     }
-  };
+  }, []);
 
   // Historial
   const getHistorialFactura = async ({ tercero, tipo, asiento }) => {
@@ -266,6 +276,7 @@ export const DataProvider = ({ children }) => {
     dataLoaded,
     recargarDatos,
     getFacturasEmpresa,
+    clearFacturasCache: () => { try { facturasCache.current.clear(); } catch (e) {} },
     asignarConsultorACliente,
     getHistorialFactura,
     registrarEventoHistorial,
@@ -277,17 +288,26 @@ export const DataProvider = ({ children }) => {
     apiBusy,
     apiError,
     apiLastOk,
+    probarConexion: async () => {
+      try {
+        setApiBusy((c) => c + 1)
+        const { testConnection } = await import('../services/api')
+        await testConnection()
+        setApiError(null)
+        setApiLastOk(Date.now())
+      } catch (err) {
+        const msg = err?.response
+          ? String(err.response.status) + (err.response.statusText ? ' ' + err.response.statusText : '')
+          : (err?.message || 'Error de conexion')
+        setApiError(msg)
+      } finally {
+        setApiBusy((c) => Math.max(0, c - 1))
+      }
+    }
 };
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };
 
 export default DataContext;
-
-
-
-
-
-
-
 
