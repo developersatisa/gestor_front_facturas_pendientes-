@@ -8,6 +8,7 @@ import FacturaModal from '../components/FacturaModal'
 import AsignarConsultorModal from '../components/AsignarConsultorModal'
 import ConfirmModal from '../components/ConfirmModal'
 import HistorialList from '../components/HistorialList'
+import { pagosAPI } from '../services/api'
 import { useData } from '../context/DataContext'
 
 const FacturasEmpresa = () => {
@@ -41,9 +42,32 @@ const FacturasEmpresa = () => {
   // Historial de facturas
   const [historialMap, setHistorialMap] = useState({}) // { [facturaId]: eventos[] }
   const [openHistorial, setOpenHistorial] = useState({}) // { [facturaId]: bool }
+  const [historialPagoMap, setHistorialPagoMap] = useState({}) // { [facturaId]: pago }
+  const [pagadasList, setPagadasList] = useState([])
+  const [showPagadas, setShowPagadas] = useState(false)
+  const [loadingPagadas, setLoadingPagadas] = useState(false)
   const [showHistorialModal, setShowHistorialModal] = useState(false)
   const [historialMode, setHistorialMode] = useState('pagada') // 'pagada' | 'aplazar'
   const [selectedFactura, setSelectedFactura] = useState(null)
+  const [showPagadasModal, setShowPagadasModal] = useState(false)
+  const [showHistorialFacturaModal, setShowHistorialFacturaModal] = useState(false)
+  const [facturaSeleccionada, setFacturaSeleccionada] = useState(null)
+  const [historialFacturaEspecifica, setHistorialFacturaEspecifica] = useState([])
+  const [loadingHistorialFactura, setLoadingHistorialFactura] = useState(false)
+
+  // Prevenir scroll cuando el modal está abierto
+  React.useEffect(() => {
+    if (showPagadasModal || showHistorialFacturaModal) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = 'unset'
+    }
+    
+    // Cleanup: restaurar scroll cuando el componente se desmonta
+    return () => {
+      document.body.style.overflow = 'unset'
+    }
+  }, [showPagadasModal, showHistorialFacturaModal])
   // Helpers visuales para sociedades
   const socEmoji = (code) => (code === 'S005' ? '🟩' : code === 'S001' ? '🟦' : code === 'S010' ? '🟨' : '⚪')
   const socDotCls = (code) => (
@@ -60,12 +84,12 @@ const FacturasEmpresa = () => {
   }, [])
 
   const empresa = empresas.find(e => e.id === id)
-  const consultor = consultores.find(c => c.nombre === (empresa?.consultorAsignado || '').trim())
+  const consultor = empresa ? consultores.find(c => c.nombre === (empresa?.consultorAsignado || '').trim()) : null
 
   // Cargar facturas cuando se monta el componente
   useEffect(() => {
     const cargarFacturas = async () => {
-      if (id) {
+      if (id && empresas.length > 0) {
         setLoadingFacturas(true)
         try {
           const facturasData = await getFacturasEmpresa(id)
@@ -79,7 +103,7 @@ const FacturasEmpresa = () => {
       }
     }
     cargarFacturas()
-  }, [id])
+  }, [id, empresas.length])
 
   const toggleHistorial = async (factura) => {
     setOpenHistorial(prev => ({ ...prev, [factura.id]: !prev[factura.id] }))
@@ -87,6 +111,55 @@ const FacturasEmpresa = () => {
       const eventos = await getHistorialFactura({ tercero: factura.tercero, tipo: factura.tipo, asiento: factura.asiento })
       setHistorialMap(prev => ({ ...prev, [factura.id]: eventos }))
     }
+    if (!historialPagoMap[factura.id]) {
+      try {
+        const { data } = await pagosAPI.getHistorialPago({ tipo: String(factura.tipo), asiento: String(factura.asiento), tercero: String(factura.tercero), sociedad: String(factura.sociedad) })
+        setHistorialPagoMap(prev => ({ ...prev, [factura.id]: data || null }))
+      } catch (e) {
+        setHistorialPagoMap(prev => ({ ...prev, [factura.id]: null }))
+      }
+    }
+  }
+
+  const cargarPagadasCliente = async () => {
+    setLoadingPagadas(true)
+    try {
+      // Normalizar el ID del cliente: quitar ceros a la izquierda
+      const terceroRaw = empresa?.id || empresa?.idcliente
+      const tercero = terceroRaw ? String(parseInt(terceroRaw, 10)) : null
+      const { data } = await pagosAPI.listPagadas({ tercero, limit: 200 })
+      setPagadasList(Array.isArray(data) ? data : [])
+    } catch (e) {
+      setPagadasList([])
+    } finally {
+      setLoadingPagadas(false)
+    }
+  }
+
+  const cargarHistorialFacturaEspecifica = async (factura) => {
+    setLoadingHistorialFactura(true)
+    try {
+      // Usar el rowid de la factura para buscar en la tabla de pagos
+      const { data } = await pagosAPI.listPagadas({ factura_id: factura.id, limit: 200 })
+      setHistorialFacturaEspecifica(Array.isArray(data) ? data : [])
+    } catch (e) {
+      setHistorialFacturaEspecifica([])
+    } finally {
+      setLoadingHistorialFactura(false)
+    }
+  }
+
+  const handleVerHistorialFactura = async (factura) => {
+    setFacturaSeleccionada(factura)
+    setShowHistorialFacturaModal(true)
+    await cargarHistorialFacturaEspecifica(factura)
+  }
+
+  const handleTogglePagadas = async () => {
+    if (pagadasList.length === 0) {
+      await cargarPagadasCliente()
+    }
+    setShowPagadasModal(true)
   }
 
   const handleMarcarPagada = (factura) => {
@@ -534,6 +607,40 @@ const FacturasEmpresa = () => {
     }
   }
 
+  // Verificación de seguridad: si no hay empresa, mostrar loading o error
+  if (!empresa && !loadingFacturas) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-500 mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Cargando información de la empresa...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!empresa) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-4xl mb-4">🏢</div>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+            Empresa no encontrada
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">
+            No se pudo encontrar la empresa con ID: {id}
+          </p>
+          <button
+            onClick={() => navigate('/empresas')}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+          >
+            Volver a Empresas
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -628,7 +735,7 @@ const FacturasEmpresa = () => {
               onChange={setSearchTerm}
             />
             {/* Selector de sociedades (se reubica junto al toggle inferior) */}
-            {/* Toggle tipo + Select sociedades en una sola fila */}
+            {/* Toggle tipo + Select sociedades + Ver pagadas en una sola fila */}
             <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden">
                 <button
@@ -665,58 +772,70 @@ const FacturasEmpresa = () => {
                   Solo abonos
                 </button>
               </div>
-              {/* Select moderno de sociedades (custom dropdown para no truncar) */}
-              <div ref={socSelectRef} className="relative w-full sm:w-[28rem]">
+              {/* Derecha: Select de sociedades + botón Ver pagadas */}
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                {/* Select moderno de sociedades (custom dropdown para no truncar) */}
+                <div ref={socSelectRef} className="relative w-full sm:w-[28rem]">
+                  <button
+                    type="button"
+                    onClick={() => setOpenSocSelect((v) => !v)}
+                    className="w-full flex items-center justify-between gap-3 pl-8 pr-9 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-left hover:bg-gray-50 dark:hover:bg-gray-750 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                    aria-haspopup="listbox"
+                    aria-expanded={openSocSelect}
+                  >
+                    <span className={`absolute left-3 inline-block w-2.5 h-2.5 rounded-full ${sociedadFilter ? socDotCls(sociedadFilter) : 'bg-gray-400'}`}></span>
+                    <span className="flex-1 whitespace-normal break-words">
+                      {(() => {
+                        const s = sociedadesResumenAll.find(x => x.codigo === sociedadFilter)
+                        return s
+                          ? `${s.codigo} — ${s.nombre || s.codigo} · ${formatearMoneda(s.pendiente)} · ${s.cantidad} facs`
+                          : 'Todas las sociedades'
+                      })()}
+                    </span>
+                    <svg className="w-4 h-4 text-gray-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                      <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                  {openSocSelect && (
+                    <ul
+                      role="listbox"
+                      className="absolute z-10 mt-2 w-full max-h-64 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg"
+                    >
+                      <li
+                        role="option"
+                        aria-selected={sociedadFilter === ''}
+                        onClick={() => { setSociedadFilter(''); setOpenSocSelect(false) }}
+                        className={`cursor-pointer px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-700 ${sociedadFilter === '' ? 'bg-gray-50 dark:bg-gray-700/50' : ''}`}
+                      >
+                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-gray-400"></span>
+                        <span className="whitespace-normal break-words">Todas las sociedades</span>
+                      </li>
+                      {sociedadesResumenAll.map((s) => (
+                        <li
+                          key={s.codigo}
+                          role="option"
+                          aria-selected={sociedadFilter === s.codigo}
+                          onClick={() => { setSociedadFilter(s.codigo); setOpenSocSelect(false) }}
+                          className={`cursor-pointer px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-700 ${sociedadFilter === s.codigo ? 'bg-gray-50 dark:bg-gray-700/50' : ''}`}
+                        >
+                          <span className={`inline-block w-2.5 h-2.5 rounded-full ${socDotCls(s.codigo)}`}></span>
+                          <span className="flex-1 whitespace-normal break-words">
+                            {`${s.codigo} — ${s.nombre || s.codigo} · ${formatearMoneda(s.pendiente)} · ${s.cantidad} facs`}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
                 <button
                   type="button"
-                  onClick={() => setOpenSocSelect((v) => !v)}
-                  className="w-full flex items-center justify-between gap-3 pl-8 pr-9 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-left hover:bg-gray-50 dark:hover:bg-gray-750 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
-                  aria-haspopup="listbox"
-                  aria-expanded={openSocSelect}
+                  onClick={handleTogglePagadas}
+                  className="px-4 py-1.5 text-sm font-medium rounded-lg transition-colors bg-teal-600 hover:bg-teal-700 text-white"
+                  disabled={loadingPagadas}
+                  title="Ver facturas pagadas fuera de plazo"
                 >
-                  <span className={`absolute left-3 inline-block w-2.5 h-2.5 rounded-full ${sociedadFilter ? socDotCls(sociedadFilter) : 'bg-gray-400'}`}></span>
-                  <span className="flex-1 whitespace-normal break-words">
-                    {(() => {
-                      const s = sociedadesResumenAll.find(x => x.codigo === sociedadFilter)
-                      return s
-                        ? `${s.codigo} — ${s.nombre || s.codigo} · ${formatearMoneda(s.pendiente)} · ${s.cantidad} facs`
-                        : 'Todas las sociedades'
-                    })()}
-                  </span>
-                  <svg className="w-4 h-4 text-gray-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z" clipRule="evenodd" />
-                  </svg>
+                  {loadingPagadas ? 'Cargando…' : 'Ver pagadas'}
                 </button>
-                {openSocSelect && (
-                  <ul
-                    role="listbox"
-                    className="absolute z-10 mt-2 w-full max-h-64 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg"
-                  >
-                    <li
-                      role="option"
-                      aria-selected={sociedadFilter === ''}
-                      onClick={() => { setSociedadFilter(''); setOpenSocSelect(false) }}
-                      className={`cursor-pointer px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-700 ${sociedadFilter === '' ? 'bg-gray-50 dark:bg-gray-700/50' : ''}`}
-                    >
-                      <span className="inline-block w-2.5 h-2.5 rounded-full bg-gray-400"></span>
-                      <span className="whitespace-normal break-words">Todas las sociedades</span>
-                    </li>
-                    {sociedadesResumenAll.map((s) => (
-                      <li
-                        key={s.codigo}
-                        role="option"
-                        aria-selected={sociedadFilter === s.codigo}
-                        onClick={() => { setSociedadFilter(s.codigo); setOpenSocSelect(false) }}
-                        className={`cursor-pointer px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-700 ${sociedadFilter === s.codigo ? 'bg-gray-50 dark:bg-gray-700/50' : ''}`}
-                      >
-                        <span className={`inline-block w-2.5 h-2.5 rounded-full ${socDotCls(s.codigo)}`}></span>
-                        <span className="flex-1 whitespace-normal break-words">
-                          {`${s.codigo} — ${s.nombre || s.codigo} · ${formatearMoneda(s.pendiente)} · ${s.cantidad} facs`}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </div>
             </div>
           </div>
@@ -771,8 +890,8 @@ const FacturasEmpresa = () => {
                         </span>
                         <button
                           className="inline-flex items-center space-x-2 px-3 py-1.5 rounded-md bg-[#0A5C63] hover:bg-[#A4C63B] text-white transition-colors text-xs"
-                          onClick={() => toggleHistorial(factura)}
-                          title="Ver historial de cambios"
+                          onClick={() => handleVerHistorialFactura(factura)}
+                          title="Ver historial de pagos de esta factura"
                         >
                           <History className="w-3.5 h-3.5" />
                           <span>Historial</span>
@@ -1084,6 +1203,20 @@ const FacturasEmpresa = () => {
                 </div>
                 {openHistorial[factura.id] && (
                   <div className="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
+                    {/* Historial de pago (tabla externa) */}
+                    {historialPagoMap[factura.id] ? (
+                      <div className="mb-4 p-3 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700">
+                        <p className="text-sm text-green-800 dark:text-green-300">
+                          Vencida desde: <span className="font-semibold">{formatearFecha(historialPagoMap[factura.id].vencimiento)}</span>
+                          {` · `}Pagada el: <span className="font-semibold">{formatearFecha(historialPagoMap[factura.id].fecha_pago)}</span>
+                          {` · `}Días de retraso: <span className="font-semibold">{historialPagoMap[factura.id].dias_retraso ?? Math.max(0, Math.ceil((new Date(historialPagoMap[factura.id].fecha_pago) - new Date(historialPagoMap[factura.id].vencimiento)) / (1000*60*60*24)))}</span>
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="mb-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+                        <p className="text-sm text-gray-700 dark:text-gray-300">No hay registro de pago para esta factura.</p>
+                      </div>
+                    )}
                     <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">Historial de la factura</h4>
                     <HistorialList eventos={historialMap[factura.id]} />
                   </div>
@@ -1179,6 +1312,291 @@ const FacturasEmpresa = () => {
               : itemToDelete?.descripcion?.substring(0, 30) + '...'
           }
         />
+
+        {/* Modal de facturas pagadas fuera de plazo */}
+        {showPagadasModal && (
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+            onClick={() => setShowPagadasModal(false)}
+          >
+            <div 
+              className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-4xl max-h-[80vh] overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header del modal */}
+              <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Historial de Pagos</h2>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-gray-500 dark:text-gray-400">
+                    {pagadasList.length} registro(s)
+                  </span>
+                  <button
+                    onClick={() => setShowPagadasModal(false)}
+                    className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                  >
+                    <span className="text-gray-500 dark:text-gray-400 text-lg">×</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Contenido del modal */}
+              <div className="p-4 overflow-y-auto max-h-[calc(80vh-80px)]">
+                {loadingPagadas ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-500"></div>
+                    <span className="ml-3 text-gray-600 dark:text-gray-400">Cargando...</span>
+                  </div>
+                ) : pagadasList.length === 0 ? (
+                  <div className="text-center py-8">
+                    <div className="text-4xl mb-2">✅</div>
+                    <p className="text-gray-600 dark:text-gray-400">No hay pagos registrados</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {pagadasList.map((factura, idx) => (
+                      <div key={`${factura.factura_id || factura.tipo + '-' + factura.asiento}-${idx}`} 
+                           className="bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 p-3 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors">
+                        
+                        {/* Header compacto */}
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-gray-900 dark:text-white">
+                              {factura.factura_id || `${factura.tipo}-${factura.asiento}`}
+                            </span>
+                            <span className="px-2 py-1 bg-gray-200 dark:bg-gray-600 rounded text-xs text-gray-600 dark:text-gray-300">
+                              {factura.sociedad || 'Sin sociedad'}
+                            </span>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                              {formatearMoneda(factura.total_pagado || 0)}
+                            </div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">Pagado</div>
+                          </div>
+                        </div>
+                        
+                        {/* Información de importes */}
+                        <div className="grid grid-cols-3 gap-3 text-xs mb-2">
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Total:</span>
+                            <div className="font-medium text-gray-900 dark:text-white">
+                              {formatearMoneda(factura.importe_total || 0)}
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Pagado:</span>
+                            <div className="font-medium text-green-600 dark:text-green-400">
+                              {formatearMoneda(factura.total_pagado || 0)}
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Pendiente:</span>
+                            <div className="font-medium text-red-600 dark:text-red-400">
+                              {formatearMoneda(factura.importe_pendiente || 0)}
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Información de fechas */}
+                        <div className="grid grid-cols-3 gap-3 text-xs">
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Vencimiento:</span>
+                            <div className="font-medium text-gray-900 dark:text-white">
+                              {formatearFecha(factura.vencimiento) || 'N/A'}
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Último Pago:</span>
+                            <div className="font-medium text-gray-900 dark:text-white">
+                              {factura.pagos && factura.pagos.length > 0 
+                                ? formatearFecha(factura.pagos[factura.pagos.length - 1].fecha_pago) 
+                                : 'N/A'}
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Retraso:</span>
+                            <div className={`font-medium ${factura.dias_retraso > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                              {factura.dias_retraso != null ? `${factura.dias_retraso} días` : 'N/A'}
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Lista de pagos si hay múltiples */}
+                        {factura.pagos && factura.pagos.length > 1 && (
+                          <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                              Pagos realizados ({factura.pagos.length}):
+                            </div>
+                            <div className="space-y-1 max-h-32 overflow-y-auto">
+                              {factura.pagos.map((pago, pIdx) => (
+                                <div key={pIdx} className="flex justify-between items-center text-xs bg-gray-100 dark:bg-gray-600 rounded px-2 py-1">
+                                  <span className="text-gray-600 dark:text-gray-300">
+                                    {formatearFecha(pago.fecha_pago)}
+                                  </span>
+                                  <span className="font-medium text-gray-900 dark:text-white">
+                                    {formatearMoneda(pago.monto_pagado || 0)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de historial específico de factura */}
+        {showHistorialFacturaModal && facturaSeleccionada && (
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+            onClick={() => setShowHistorialFacturaModal(false)}
+          >
+            <div 
+              className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-4xl max-h-[80vh] overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header del modal */}
+              <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                    Historial de Pagos - Factura {facturaSeleccionada.numero}
+                  </h2>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-gray-500 dark:text-gray-400">
+                    {historialFacturaEspecifica.length} registro(s)
+                  </span>
+                  <button
+                    onClick={() => setShowHistorialFacturaModal(false)}
+                    className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                  >
+                    <span className="text-gray-500 dark:text-gray-400 text-lg">×</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Contenido del modal */}
+              <div className="p-4 overflow-y-auto max-h-[calc(80vh-80px)]">
+                {loadingHistorialFactura ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-500"></div>
+                    <span className="ml-3 text-gray-600 dark:text-gray-400">Cargando...</span>
+                  </div>
+                ) : historialFacturaEspecifica.length === 0 ? (
+                  <div className="text-center py-8">
+                    <div className="text-4xl mb-2">📄</div>
+                    <p className="text-gray-600 dark:text-gray-400">No hay pagos registrados para esta factura</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Información general de la factura */}
+                    {historialFacturaEspecifica.length > 0 && (
+                      <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-700 p-4 mb-4">
+                        <h3 className="text-lg font-semibold text-blue-900 dark:text-blue-100 mb-3">
+                          Información de la Factura
+                        </h3>
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <span className="text-blue-700 dark:text-blue-300 font-medium">Importe Total:</span>
+                            <div className="text-blue-900 dark:text-blue-100 font-semibold">
+                              {formatearMoneda(historialFacturaEspecifica[0].importe_total || 0)}
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-blue-700 dark:text-blue-300 font-medium">Vencimiento:</span>
+                            <div className="text-blue-900 dark:text-blue-100 font-semibold">
+                              {formatearFecha(historialFacturaEspecifica[0].vencimiento) || 'N/A'}
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-blue-700 dark:text-blue-300 font-medium">Total Pagado:</span>
+                            <div className="text-green-600 dark:text-green-400 font-semibold">
+                              {formatearMoneda(historialFacturaEspecifica[0].total_pagado || 0)}
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-blue-700 dark:text-blue-300 font-medium">Pendiente:</span>
+                            <div className="text-red-600 dark:text-red-400 font-semibold">
+                              {formatearMoneda(historialFacturaEspecifica[0].importe_pendiente || 0)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Lista de pagos individuales */}
+                    <div className="space-y-3">
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+                        Pagos Realizados ({historialFacturaEspecifica.length > 0 ? historialFacturaEspecifica[0].pagos?.length || 0 : 0})
+                      </h3>
+                      {historialFacturaEspecifica.length > 0 && historialFacturaEspecifica[0].pagos ? (
+                        historialFacturaEspecifica[0].pagos.map((pago, idx) => (
+                          <div key={`pago-${idx}`} 
+                               className="bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 p-4 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors">
+                            
+                            {/* Header del pago */}
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center">
+                                  <span className="text-blue-600 dark:text-blue-300 font-semibold text-sm">
+                                    {idx + 1}
+                                  </span>
+                                </div>
+                                <div>
+                                  <div className="text-sm font-medium text-gray-900 dark:text-white">
+                                    Pago #{idx + 1}
+                                  </div>
+                                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                                    {formatearFecha(pago.fecha_pago) || 'Fecha no disponible'}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-lg font-bold text-green-600 dark:text-green-400">
+                                  {formatearMoneda(pago.monto_pagado || 0)}
+                                </div>
+                                <div className="text-xs text-gray-500 dark:text-gray-400">Importe Pagado</div>
+                              </div>
+                            </div>
+                            
+                            {/* Información adicional */}
+                            <div className="grid grid-cols-2 gap-4 text-xs">
+                              <div>
+                                <span className="text-gray-500 dark:text-gray-400">Fecha de Pago:</span>
+                                <div className="font-medium text-gray-900 dark:text-white">
+                                  {formatearFecha(pago.fecha_pago) || 'N/A'}
+                                </div>
+                              </div>
+                              <div>
+                                <span className="text-gray-500 dark:text-gray-400">Días de Retraso:</span>
+                                <div className={`font-medium ${historialFacturaEspecifica[0].dias_retraso > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                                  {historialFacturaEspecifica[0].dias_retraso !== null ? `${historialFacturaEspecifica[0].dias_retraso} días` : 'N/A'}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-center py-4 text-gray-500 dark:text-gray-400">
+                          No hay pagos registrados para esta factura
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
       {/* Historial modal eliminado: funcionalidad de pagada/aplazar desactivada */}

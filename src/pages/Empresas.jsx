@@ -9,7 +9,7 @@ import { useData } from '../context/DataContext'
 
 const Empresas = () => {
   const navigate = useNavigate()
-  const { empresas, consultores, loading, error, dataLoaded, recargarDatos, asignarConsultorACliente } = useData()
+  const { empresas, consultores, loading, error, dataLoaded, recargarDatos, asignarConsultorACliente, cargarConsultores } = useData()
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedConsultor, setSelectedConsultor] = useState('')
   const [showAsignarModal, setShowAsignarModal] = useState(false)
@@ -40,6 +40,13 @@ const Empresas = () => {
   React.useEffect(() => {
     setCurrentPage(1)
   }, [searchTerm, selectedConsultor])
+
+  // Cargar consultores si no están cargados
+  React.useEffect(() => {
+    if (consultores.length === 0 && !loading) {
+      cargarConsultores()
+    }
+  }, [consultores.length, loading, cargarConsultores])
 
   const handleAsignarConsultor = (empresa) => {
     setSelectedEmpresa(empresa)

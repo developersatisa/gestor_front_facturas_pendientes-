@@ -275,6 +275,7 @@ export const DataProvider = ({ children }) => {
     error,
     dataLoaded,
     recargarDatos,
+    cargarConsultores,
     getFacturasEmpresa,
     clearFacturasCache: () => { try { facturasCache.current.clear(); } catch (e) {} },
     asignarConsultorACliente,
